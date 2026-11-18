@@ -487,6 +487,106 @@ IGD_DESC = """<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"
 </serviceList></device></deviceList></device></deviceList></device></root>"""
 
 
+class ChecklistTest(unittest.TestCase):
+    """Чек-лист E1–E9: четыре исхода и «был X, стал Y»."""
+
+    def net(self, router=None):
+        cam = sdev(MAC_C, "192.0.2.10", "camera")
+        nas = sdev("00:00:5E:00:53:0D", "192.0.2.20", "nas")
+        pc = sdev("00:00:5E:00:53:0E", "192.0.2.30", "computer", local=True)
+        gw = sdev(MAC_B, "192.0.2.1", "router", gateway=True)
+        for d, conf in ((cam, 3), (nas, 4), (pc, 4), (gw, 4)):
+            d["identity"]["confidence"] = conf
+        return model([gw, cam, nas, pc], router=router)
+
+    def items(self, m, marks=None):
+        from lanmap import checklist
+        return {c["id"]: c for c in checklist.evaluate(m, marks or {})["criteria"]}
+
+    def test_without_router_and_checks(self):
+        c = self.items(self.net())
+        self.assertEqual(c["E1"]["status"], "ok")
+        for code in ("E2", "E3", "E4", "E9"):
+            self.assertEqual(c[code]["status"], "unknown", code)  # нечем проверить — не «выполнен»
+        self.assertEqual(c["E6"]["status"], "owner")
+        self.assertEqual(self.items(self.net(), {"E8": {"status": "done"}})["E8"]["status"], "ok")
+
+    def test_e1_router_label_counts(self):
+        m = self.net()
+        m["devices"][1]["identity"]["confidence"] = 1
+        self.assertEqual(self.items(m)["E1"]["status"], "fail")
+        self.assertEqual(self.items(m)["E1"]["devices"][0]["key"], MAC_C)
+        m["devices"][1]["router"] = {"label": "Камера у ворот"}  # подписано в роутере — засчитывается
+        self.assertEqual(self.items(m)["E1"]["status"], "ok")
+
+    def test_findings_based(self):
+        from lanmap import security
+        m = self.net(router={"forwards": [], "reservations": []})
+        m["devices"][0]["services"] = [{"port": 23, "name": None}]
+        m["security"] = security.evaluate(m, SecurityTest().snap(), {23}, {})
+        c = self.items(m)
+        self.assertEqual(c["E4"]["status"], "fail")
+        self.assertEqual(c["E4"]["findings"][0]["id"], "TELNET_OPEN")
+        self.assertEqual(c["E2"]["status"], "ok")  # роутер прочитан, пробросов нет
+        # Telnet оставлен осознанно — критерий не мешает
+        m["security"] = security.evaluate(m, SecurityTest().snap(), {23},
+                                          {security.uid("TELNET_OPEN", MAC_B): {"status": "accepted"}})
+        self.assertEqual(self.items(m)["E4"]["status"], "ok")
+
+    def test_static_forward_is_e2(self):
+        from lanmap import security
+        fw = {"kind": "static", "protocol": "udp", "port": 51820, "to_ip": "192.0.2.20", "to_port": 51820}
+        m = self.net(router={"forwards": [fw], "reservations": []})
+        m["security"] = security.evaluate(m, SecurityTest().snap(), set(), {})
+        self.assertEqual([f["id"] for f in m["security"]["findings"]], ["STATIC_PORT_FORWARD"])
+        self.assertEqual(self.items(m)["E2"]["status"], "fail")
+        m["security"] = security.evaluate(m, SecurityTest().snap(), set(), {
+            security.uid("STATIC_PORT_FORWARD", "00:00:5E:00:53:0D"): {"status": "accepted", "reason": "VPN"}})
+        self.assertEqual(self.items(m)["E2"]["status"], "ok")
+
+    def test_e3_segments_and_e9_reservations(self):
+        m = self.net(router={"forwards": [], "reservations": [{"mac": "00:00:5e:00:53:0d", "ip": "192.0.2.20"}]})
+        for d, seg in zip(m["devices"], ("Home", "Home", "Home", "Home")):
+            d["router"] = {"segment": seg}
+        c = self.items(m)
+        self.assertEqual((c["E3"]["status"], c["E3"]["likely"]), ("fail", True))
+        self.assertEqual(c["E3"]["devices"][0]["key"], MAC_C)
+        self.assertEqual((c["E9"]["status"], c["E9"]["done"], c["E9"]["total"]), ("fail", 1, 2))  # камера без резервации
+        m["devices"][1]["router"]["segment"] = "Guest"
+        m["router"]["reservations"].append({"mac": MAC_C.lower(), "ip": "192.0.2.10"})
+        c = self.items(m)
+        self.assertEqual(c["E3"]["status"], "ok")
+        self.assertEqual(c["E9"]["status"], "ok")
+        m["router"]["reservations"] = None  # модуль роутера резервации не читает
+        self.assertEqual(self.items(m)["E9"]["status"], "unknown")
+
+    def test_compare(self):
+        from lanmap import checklist
+
+        def cl(**st):
+            items = [{"id": k, "status": v} for k, v in st.items()]
+            return {"criteria": items, "score": sum(1 for v in st.values() if v == "ok")}
+        d = checklist.compare(cl(E1="fail", E2="ok", E3="unknown", E4="ok"), cl(E1="ok", E2="fail", E3="ok", E4="unknown"))
+        self.assertEqual((d["better"], d["worse"]), (["E1"], ["E2"]))  # E3 и E4 нечем было проверить — не изменение
+        self.assertEqual((d["old"], d["new"]), (2, 2))
+
+    def test_keenetic_reservations(self):
+        from lanmap.routers import keenetic
+        base = {"kind": "keenetic", "data": {"version": {}}, "errors": {}}
+        self.assertIsNone(keenetic.normalize(base)["reservations"])  # старый срез: не читали
+        base["data"]["dhcp_hosts"] = [{"mac": MAC_B, "ip": "192.0.2.10"}]
+        self.assertEqual(keenetic.normalize(base)["reservations"], [{"mac": MAC_B.lower(), "ip": "192.0.2.10"}])
+
+    def test_set_mark(self):
+        from lanmap import checklist
+        checklist.set_mark("e8", "done", "восстановил файл")
+        self.assertEqual(checklist.load_marks()["E8"]["note"], "восстановил файл")
+        with self.assertRaises(ValueError):
+            checklist.set_mark("E4", "done")  # проверяется по срезу
+        checklist.set_mark("E8", "open")
+        self.assertNotIn("E8", checklist.load_marks())
+
+
 def soap_ok(**fields) -> bytes:
     inner = "".join(f"<{k}>{v}</{k}>" for k, v in fields.items())
     return (f'<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>'

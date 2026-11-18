@@ -15,6 +15,7 @@ import ipaddress
 import re
 from pathlib import Path
 
+from lanmap import checklist as cl_mod
 from lanmap import forwards as fw_mod
 from lanmap.util import read_json
 
@@ -268,6 +269,7 @@ def compare(old: dict, new: dict, tested_old: set[int] | None = None, tested_new
 
     added, removed, first = _findings_diff(old, new, pairs, tested_old, tested_new)
     result["findings_added"], result["findings_removed"] = added, removed
+    result["checklist"] = cl_mod.compare(old.get("checklist"), new.get("checklist"))
     for f in added:
         result["by_key"].setdefault(f["key"], []).append(
             {"what": "finding", "short": "находка", "priority": f["priority"], "text": f'новая находка: {f["detail"]}'})
@@ -292,6 +294,8 @@ def compare(old: dict, new: dict, tested_old: set[int] | None = None, tested_new
                        + len(result["offline"]) + result["private"]["new"] + result["private"]["gone"]
                        + len(result["forwards_added"]) + len(result["forwards_removed"]) + len(result["router"])
                        + len(added) + len(removed))
+    if result["checklist"]:
+        result["total"] += len(result["checklist"]["better"]) + len(result["checklist"]["worse"])
     return result
 
 
@@ -302,4 +306,7 @@ def summary(changes: dict) -> str:
         parts.append(f'пробросы +{len(changes["forwards_added"])}/−{len(changes["forwards_removed"])}')
     if changes.get("findings_added") or changes.get("findings_removed"):
         parts.append(f'находки +{len(changes["findings_added"])}/−{len(changes["findings_removed"])}')
+    cl = changes.get("checklist")
+    if cl and cl["old"] != cl["new"]:
+        parts.append(f'порядок в сети {cl["old"]} → {cl["new"]}')
     return f'С прошлого среза ({changes["baseline"]}): ' + ", ".join(parts)

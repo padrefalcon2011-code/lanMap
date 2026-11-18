@@ -158,6 +158,28 @@ def _upnp(ctx: Ctx) -> tuple[bool, list[dict]]:
     return True, hits
 
 
+def _static_fw(ctx: Ctx) -> tuple[bool, list[dict]]:
+    # Статические пробросы видит только модуль роутера (IGD отдаёт лишь UPnP)
+    if "static" not in fw_mod.known_kinds(ctx.model):
+        return False, []
+    reach = (ctx.model.get("igd") or {}).get("external_scope")
+    behind_nat = reach in ("cgnat", "private")
+    by_ip = {ip: d for d in ctx.devices for ip in d["ips"]}
+    groups: dict[str, list[dict]] = {}
+    for f in fw_mod.merged(ctx.model):
+        if f.get("kind") == "static":
+            groups.setdefault(f.get("to_ip") or "?", []).append(f)
+    hits = []
+    for ip, fws in groups.items():
+        dev = by_ip.get(ip) or {"key": f"ip:{ip}", "ips": [ip], "title": ip, "identity": {"type": "unknown"}}
+        ports = ", ".join(f'{f.get("port")}→{f.get("to_port")}' for f in fws)
+        hits.append(_hit(dev, f"пробросов из интернета: {len(fws)} ({ports})", "likely" if behind_nat else "confirmed",
+                         extra={"router_based": True, "reach": reach,
+                                "forwards": [f'{(f.get("protocol") or "").upper()} {f.get("port")}→{f.get("to_port")}'
+                                             for f in fws]}))
+    return True, hits
+
+
 def _telnet(ctx: Ctx) -> tuple[bool, list[dict]]:
     if not ctx.port_checked(23):
         return False, []
@@ -265,6 +287,34 @@ CHECKS: list[Check] = [
         verify="В новом срезе нет пробросов к устройству. Доступ снаружи работает только через VPN или облако.",
         detect=_upnp, needs="роутер не ответил по UPnP (или список прочитан не до конца), а входа в роутер нет "
                             "(python -m lanmap router login)",
+    ),
+    Check(
+        id="STATIC_PORT_FORWARD", title="Дверь из интернета, открытая вручную", icon="globe", priority=2,
+        criteria=["E2"], who="internet", stake=["device"],
+        risk="На роутере вручную заведён проброс: запросы из интернета на этот порт уходят прямо к устройству. "
+             "Иногда это осознанно (VPN-сервер, игровой сервер), но часто проброс остаётся от давней настройки. "
+             "Боты круглосуточно ищут такие двери и пробуют пароли и известные дыры.",
+        scheme=[("globe", "Интернет", "боты ищут двери", "crit"), ("router", "Роутер", "правило вручную", "warn"),
+                ("@dev", "", "получает запросы", "")],
+        links=[("{forwards}", "r"), ("пропускает", "r")],
+        threat=[("key", "подберут пароль"), ("chip", "захватят устройство")],
+        todo=[("question", "Вспомни, зачем этот проброс"), ("router", "Не нужен — удали на роутере"),
+              ("check", "Нужен (VPN) — отметь «оставляю осознанно»")],
+        note="Правило в роутере есть; дойдёт ли запрос снаружи (у провайдера может быть свой NAT) — не проверено.",
+        steps=[
+            "Вспомни, зачем сделан проброс. Если это VPN или другой осознанный доступ и устройство обновляется — "
+            "оставь его и отметь находку «принята осознанно» (команда ниже).",
+            "Не нужен или непонятно чей — удали правило на роутере (раздел обычно называется «Переадресация», "
+            "«Проброс портов», «Виртуальные серверы» или «NAT»).",
+            "Если доступ снаружи всё же нужен — лучше VPN до дома, чем открытая дверь к самому устройству.",
+        ],
+        router_steps={
+            "keenetic": ["Роутер Keenetic: «Сетевые правила → Переадресация» — выдели правило и удали."],
+        },
+        breaks="Перестанет работать то, ради чего делали проброс: доступ к устройству из интернета напрямую.",
+        rollback="Создай правило переадресации заново с теми же портами.",
+        verify="В новом срезе у роутера нет этого проброса, или находка отмечена «принята осознанно».",
+        detect=_static_fw, needs="статические пробросы видны только через вход в роутер (python -m lanmap router login)",
     ),
     Check(
         id="TELNET_OPEN", title="Управление по Telnet — пароль идёт открытым текстом", icon="key", priority=1,

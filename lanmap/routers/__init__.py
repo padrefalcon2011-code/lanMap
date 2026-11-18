@@ -11,6 +11,7 @@
                 "ssid", "band", "ap", "rssi", "txrate", "port", "speed",
                 "uptime_s", "first_seen_s_ago", "last_seen_s_ago", "access", "via"}],
    "forwards": [{"kind" (upnp/static), "protocol", "port", "to_ip", "to_port", "description", "interface"}],
+   "reservations": [{"mac", "ip"}] — резервации DHCP (закреплённые адреса) или None, если модуль их не читает,
    "errors": {...}}
 """
 from __future__ import annotations

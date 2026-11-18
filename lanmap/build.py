@@ -4,7 +4,7 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 
-from lanmap import actions, changes, devices, identify, oui, registry, routers, security
+from lanmap import actions, changes, checklist, devices, identify, oui, registry, routers, security
 from lanmap.collectors import igd
 from lanmap.report import render
 from lanmap.util import now_iso, read_json, write_json
@@ -66,6 +66,7 @@ def make_model(snapshot: Path, reg: dict | None = None) -> dict:
         "devices": devs,
     }
     model["security"] = security.evaluate(model, snapshot, changes.tested_ports(snapshot))
+    model["checklist"] = checklist.evaluate(model)
     return model
 
 

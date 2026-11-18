@@ -193,6 +193,34 @@ def cmd_finding(args) -> int:
     return 0
 
 
+def cmd_check(args) -> int:
+    from lanmap import checklist
+    snap = _snapshot_arg(None)
+    if args.action == "list":
+        model = read_json(snap / "devices.json", {}) or {}
+        cl = model.get("checklist")
+        if cl is None:
+            raise SystemExit("В последнем срезе ещё нет чек-листа. Пересобери: python -m lanmap build")
+        names = {"ok": "выполнен", "fail": "не выполнен", "owner": "отмечаешь ты", "unknown": "нечем проверить"}
+        print(f'Порядок в сети: {cl["score"]} из {cl["total"]}')
+        for c in cl["criteria"]:
+            frac = f' {c["done"]}/{c["total"]}' if c.get("total") else ""
+            print(f'{c["id"]}  {names[c["status"]]:<16}{frac:<7} {c["title"]} — {c["why"]}')
+        print("\nОтметить (E6, E8): python -m lanmap check set E8 done [--note «что сделал»]; снять — open")
+        return 0
+    if not args.code or not args.status:
+        raise SystemExit("Нужно: check set <E6|E8> <done|open> [--note «…»]")
+    try:
+        checklist.set_mark(args.code, args.status, args.note)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    print(f'{args.code.upper()}: {checklist.MARK_STATUSES[args.status]}')
+    from lanmap.build import build
+    build(snap)
+    print(f"Отчёт пересобран: {snap / 'report.html'}")
+    return 0
+
+
 def _gateway() -> str:
     net = _pick_network(None, True)
     if not net.gateway:
@@ -303,6 +331,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("status", nargs="?", help="open, in_progress, fixed, accepted, na")
     p.add_argument("--reason", help="почему (для «принята осознанно» и «не применимо»)")
     p.set_defaults(func=cmd_finding)
+
+    p = sub.add_parser("check", help="чек-лист E1–E9: список и отметки владельца (прошивки, резервные копии)")
+    p.add_argument("action", choices=["list", "set"])
+    p.add_argument("code", nargs="?", help="критерий: E6 или E8")
+    p.add_argument("status", nargs="?", help="done или open")
+    p.add_argument("--note", help="что сделано (например, «восстановил файл из копии 18.11»)")
+    p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("router", help="вход в роутер (только чтение) и проверка доступа")
     p.add_argument("action", choices=["login", "test", "forget", "probe"],

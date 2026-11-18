@@ -310,6 +310,10 @@ def _changes(model: dict) -> str:
         counters += cnt(len(c["forwards_added"]), "crit", "globe", "Новые пробросы из интернета")
     if c.get("findings_added"):
         counters += cnt(len(c["findings_added"]), "crit", "shield", "Новые находки безопасности")
+    cl = c.get("checklist")
+    if cl and cl["old"] != cl["new"]:
+        counters += (f'<span class="cnt {"add" if cl["new"] > cl["old"] else "crit"}" title="Порядок в сети: было '
+                     f'{cl["old"]}, стало {cl["new"]}">{icon("check", "s")}{cl["old"]}{icon("arrow", "s")}{cl["new"]}</span>')
     head = (f'<summary><h2>{icon("delta")}Изменения</h2><span class="muted">с {e(when)}</span>'
             f'<span class="counters">{counters}</span>{icon("chevron", "chev")}</summary>')
     notes = "".join(f'<div class="note">{icon("info", "s")}<span>{e(n)}</span></div>' for n in c.get("notes") or [])
@@ -334,6 +338,13 @@ def _changes(model: dict) -> str:
                 f'<span class="pc p{f["priority"]}">{icon("shield", "s")}П{f["priority"]}</span>')
         return row(f, f'{chip}<span>{e(sec_mod.BY_ID[f["id"]].title)}</span>')
 
+    if cl:
+        crit = sec_mod.CRITERIA
+        group("Порядок в сети",
+              [f'<div class="crow"><span class="pc add">{icon("check", "s")}{e(k)}</span><span>выполнен: {e(crit[k])}</span></div>'
+               for k in cl["better"]]
+              + [f'<div class="crow"><span class="pc crit">{icon("alert", "s")}{e(k)}</span><span>снова не выполнен: '
+                 f'{e(crit[k])}</span></div>' for k in cl["worse"]])
     group("Новые находки безопасности", [frow(f) for f in c.get("findings_added") or []])
     group("Находок больше нет", [frow(f, True) for f in c.get("findings_removed") or []])
     group("Новые устройства", [row(d, change_chip({"what": "new", "text": "в прошлом срезе этого устройства не было"}))
@@ -352,6 +363,90 @@ def _changes(model: dict) -> str:
         parts.append(f'<div class="note">{icon("shuffle", "s")}<span>Случайный MAC: '
                      f'+{p.get("new", 0)} / −{p.get("gone", 0)}. Телефоны меняют такой MAC, поштучно не сравниваются.</span></div>')
     return (f'<details class="panel" id="changes" open>{head}<div class="panel-body">{notes}{"".join(parts)}</div></details>')
+
+
+# --- порядок в сети (чек-лист E1–E9) ------------------------------------------------------------
+
+CRIT_ICONS = {"E1": "barcode", "E2": "globe", "E3": "grid", "E4": "lock", "E5": "power", "E6": "chip",
+              "E7": "bot", "E8": "folder", "E9": "link"}
+# Исход критерия: (иконка, класс, подсказка)
+CRIT_STATES = {"ok": ("check", "ok", "выполнен"), "fail": ("x", "no", "не выполнен"),
+               "owner": ("pencil", "own", "отмечаешь ты"), "unknown": ("question", "unk", "нечем проверить")}
+
+
+def _crit_row(c: dict, present: set[str]) -> str:
+    ico, cls, label = CRIT_STATES[c["status"]]
+    if c["status"] == "fail" and c.get("likely"):
+        label += " (вероятно)"
+    bar = ""
+    if c.get("total"):
+        share = round(100 * c["done"] / c["total"])
+        bar = (f'<span class="mini" title="{c["done"]} из {c["total"]}"><i style="width:{share}%"></i></span>'
+               f'<span class="frac">{c["done"]}/{c["total"]}</span>')
+    body = []
+    for g in c.get("findings") or []:
+        if g["open"]:
+            body.append(f'<a class="pc p{g["priority"]}" href="#sec-{e(g["id"])}" title="К карточке находки">'
+                        f'{icon("shield", "s")}П{g["priority"]} · {e(g["title"])}{" ×" + str(g["open"]) if g["open"] > 1 else ""}</a>')
+        if g["quiet"]:
+            body.append(f'<a class="pc" href="#sec-{e(g["id"])}">{icon("check", "s")}оставлено осознанно · '
+                        f'{e(g["title"])}{" ×" + str(g["quiet"]) if g["quiet"] > 1 else ""}</a>')
+    devs = c.get("devices") or []
+    if devs:
+        lead = {"E1": "Незнакомые", "E3": "Камеры и умный дом", "E9": "Без закреплённого адреса"}.get(c["id"], "")
+        body.append(f'<div class="edevs"><span class="lbl2">{e(lead)}</span>{"".join(_who(d, present) for d in devs)}</div>')
+    if c.get("near"):
+        body.append(f'<div class="edevs"><span class="lbl2">в одной сети с ними</span>'
+                    f'{"".join(_who(d, present) for d in c["near"])}</div>')
+    hint = {"E1": "Подпиши в роутере или командой python -m lanmap sign <IP> --name «…».",
+            "E3": "Камеры и умный дом — в гостевую или отдельную сеть, чтобы из них не было пути к ПК и NAS. "
+                  "Изоляцию гостевой сети срез не проверяет.",
+            "E9": "На роутере закрепи за ними адреса (резервация DHCP). Если адрес задан на самом устройстве "
+                  "вручную, LanMap этого не видит."}.get(c["id"]) if c["status"] == "fail" else None
+    if c["status"] in ("owner", "unknown") or c["id"] in ("E6", "E8"):
+        hint = c["why"]
+    if hint:
+        body.append(f'<div class="enote">{icon("info", "s")}<span>{e(hint)}</span></div>')
+    if c.get("mark"):
+        when = (c["mark"].get("updated") or "")[:10]
+        note = f' — {c["mark"]["note"]}' if c["mark"].get("note") else ""
+        body.append(f'<div class="enote">{icon("check", "s")}<span>Отмечено {e(when)}{e(note)}</span></div>')
+    if c["id"] in ("E6", "E8"):
+        cmd = (f'python -m lanmap check set {c["id"]} open' if c["status"] == "ok"
+               else f'python -m lanmap check set {c["id"]} done --note "…"')
+        body.append(f'<div class="cli">{"Снять отметку" if c["status"] == "ok" else "Отметить"}: <code>{e(cmd)}</code>'
+                    f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
+                    f'<span class="lbl">копировать</span></button></div>')
+    if c.get("skipped"):
+        body.append(f'<div class="enote">{icon("question", "s")}<span>Не проверялось: '
+                    f'{e("; ".join(s.lower() for s in c["skipped"]))}</span></div>')
+    return (f'<details class="erow {cls}"><summary><span class="est {cls}" title="{e(label)}" aria-label="{e(label)}">'
+            f'{icon(ico)}</span><span class="ecode">{e(c["id"])}</span>'
+            f'<span class="eico">{icon(CRIT_ICONS.get(c["id"], "info"))}</span><span class="etitle">{e(c["title"][:1].upper() + c["title"][1:])}</span>'
+            f'{bar}{icon("chevron", "s chev")}</summary><div class="ebody">{"".join(body)}</div></details>')
+
+
+def _checklist(model: dict) -> str:
+    """Панель «Порядок в сети: X из 9»: строка на критерий, по нажатию — что мешает."""
+    cl = model.get("checklist")
+    if not cl:
+        return ""
+    present = {d["key"] for d in model["devices"]}
+    share = round(100 * cl["score"] / cl["total"]) if cl["total"] else 0
+    diff = (model.get("changes") or {}).get("checklist")
+    was = ""
+    if diff and diff["old"] != diff["new"]:
+        up = diff["new"] > diff["old"]
+        was = (f'<span class="cnt {"add" if up else "crit"}" title="С прошлого среза">'
+               f'{icon("arrow" if up else "alert", "s")}было {diff["old"]}</span>')
+    n = Counter(c["status"] for c in cl["criteria"])
+    legend = "".join(f'<span class="est {CRIT_STATES[k][1]} sm" title="{e(CRIT_STATES[k][2])}">{icon(CRIT_STATES[k][0])}</span>'
+                     f'<span class="muted">{n[k]}</span>' for k in ("ok", "fail", "owner", "unknown") if n[k])
+    head = (f'<summary><h2>{icon("check")}Порядок в сети</h2><span class="score"><b>{cl["score"]}</b> из {cl["total"]}</span>'
+            f'<span class="sbar" title="{cl["score"]} из {cl["total"]} критериев"><i style="width:{share}%"></i></span>'
+            f'{was}<span class="counters">{legend}</span>{icon("chevron", "chev")}</summary>')
+    rows = "".join(_crit_row(c, present) for c in cl["criteria"])
+    return f'<details class="panel" id="order" open>{head}<div class="panel-body erows">{rows}</div></details>'
 
 
 # --- безопасность ----------------------------------------------------------------------------
@@ -459,7 +554,6 @@ def _finding_card(check, items: list[dict], present: set[str], rvendor: str | No
            f'{tip("Кто может воспользоваться: " + sec_mod.WHO_NAMES[check.who])}>{icon(WHO_ICONS[check.who])}</span>')
     stakes = "".join(f'<span class="facet" {tip("Под угрозой: " + sec_mod.STAKE_NAMES[x])}>'
                      f'{icon(STAKE_ICONS[x])}</span>' for x in check.stake)
-    crit = "".join(f'<span class="pc" title="{e(c + ": " + sec_mod.CRITERIA[c])}">{e(c)}</span>' for c in check.criteria)
 
     threat = f'<span class="tarr">{icon("arrow", "s")}</span>'.join(
         f'<span class="tch">{icon(ico)}{e(text)}</span>' for ico, text in check.threat)
@@ -477,7 +571,7 @@ def _finding_card(check, items: list[dict], present: set[str], rvendor: str | No
     return (f'<article class="scard p{prio}{" quiet" if not live else ""}" id="sec-{e(check.id)}">'
             f'<div class="fhead"><span class="fico">{icon(check.icon)}</span><h3>{e(check.title)}</h3>'
             f'<span class="prio">{icon("alert", "s")}{e(sec_mod.PRIORITY_NAMES[prio])}</span>'
-            f'<span class="facets">{who}<i class="sep"></i>{stakes}</span>{crit}</div>'
+            f'<span class="facets">{who}<i class="sep"></i>{stakes}</span></div>'
             f'{_scheme(check, items)}'
             f'{"<div class=threat><span class=lbl2>Чем грозит</span>" + threat + "</div>" if threat else ""}'
             f'{"<ol class=todo>" + todo + "</ol>" if todo else ""}'
@@ -671,6 +765,7 @@ def render(model: dict) -> str:
   {_pills(model)}
   {_kpis(model)}
 </header>
+{_checklist(model)}
 {_security(model)}
 {_forwards(model)}
 {_changes(model)}

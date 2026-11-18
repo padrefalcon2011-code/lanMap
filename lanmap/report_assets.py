@@ -18,6 +18,7 @@ ICONS = r"""<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
 <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
 <symbol id="i-delta" viewBox="0 0 24 24"><path d="M12 4 3 20h18z"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
 <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
 <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
@@ -305,7 +306,29 @@ footer{color:var(--muted);text-align:center;padding:20px;font-size:12px}
 .hidden{display:none!important}
 .flash{animation:flash 1.4s ease}
 @keyframes flash{0%,40%{box-shadow:0 0 0 3px var(--accent)}100%{box-shadow:var(--shadow)}}
-@media (max-width:560px){.gfilters{grid-template-columns:repeat(3,1fr);gap:10px}.gf .badge{top:5px;right:5px;min-width:24px;
+.score{font-size:14px;color:var(--muted)}.score b{font-size:22px;color:var(--fg);margin-right:2px}
+.sbar{flex:0 1 160px;min-width:80px;height:8px;border-radius:4px;background:var(--chip);overflow:hidden}
+.sbar i,.mini i{display:block;height:100%;background:var(--good);border-radius:inherit}
+.erows{display:flex;flex-direction:column;gap:6px}
+.erow{border:1px solid var(--line);border-radius:10px}
+.erow>summary{display:flex;align-items:center;gap:10px;padding:6px 10px;cursor:pointer;list-style:none}
+.erow>summary::-webkit-details-marker{display:none}
+.erow .chev{color:var(--accent);transform:rotate(-90deg);transition:transform .15s;margin-left:6px}.erow[open] .chev{transform:none}
+.est{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--chip);color:var(--faint)}
+.est svg.i{width:18px;height:18px}.est.sm{width:22px;height:22px}.est.sm svg.i{width:13px;height:13px}
+.est.ok{background:color-mix(in srgb,var(--good) 18%,var(--card));color:var(--good)}
+.est.no{background:var(--crit-soft);color:var(--crit)}.est.own{background:var(--warn-soft);color:var(--warn-text)}
+.ecode{font-size:12px;color:var(--faint);width:22px;flex:none}.eico{color:var(--muted);display:inline-flex}
+.etitle{flex:1 1 auto;min-width:0;font-weight:600}.erow.ok .etitle{color:var(--muted)}
+.mini{width:70px;height:6px;border-radius:3px;background:var(--chip);overflow:hidden;flex:none}
+.frac{font-size:12px;color:var(--muted);min-width:34px;text-align:right}
+.ebody{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:2px 12px 10px 74px}
+.ebody a.pc{text-decoration:none;font-family:inherit}.ebody>div{flex-basis:100%}
+.edevs{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.edevs .who{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;cursor:pointer;font:inherit;font-weight:600;color:inherit}
+.edevs button.who:hover{color:var(--accent)}
+.enote{display:flex;gap:6px;align-items:flex-start;font-size:12px;color:var(--muted)}
+@media (max-width:560px){.ebody{padding-left:12px}.mini{display:none}.gfilters{grid-template-columns:repeat(3,1fr);gap:10px}.gf .badge{top:5px;right:5px;min-width:24px;
 height:24px;line-height:24px;font-size:13px}.wrap{padding:12px}
 .scheme{flex-direction:column;align-items:stretch}.sn,.sn.dev{width:auto;flex-direction:row;text-align:left;gap:10px}
 .sn small{margin-left:auto}.snc{width:44px;height:44px}.snc svg.i{width:26px;height:26px}

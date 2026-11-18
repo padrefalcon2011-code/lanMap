@@ -24,6 +24,7 @@ READS = {
     "hotspot": "show/ip/hotspot",          # клиенты: имя, IP, MAC, Wi-Fi/кабель, сигнал, время
     "known_hosts": "known/host",           # зарегистрированные владельцем устройства (подписи)
     "dhcp_bindings": "show/ip/dhcp/bindings",
+    "dhcp_hosts": "ip/dhcp/host",          # резервации DHCP (чтение конфигурации): закреплённые адреса
     "associations": "show/associations",   # Wi-Fi-ассоциации
     "mws": "show/mws/member",              # mesh-узлы (если есть)
     "static_nat": "ip/static",             # пробросы портов (конфигурация)
@@ -198,11 +199,17 @@ def normalize(raw: dict) -> dict:
             forwards.append({"kind": "static", "protocol": e.get("protocol"), "port": e.get("port"),
                              "to_ip": e.get("to-host") or e.get("to-address"), "to_port": e.get("to-port") or e.get("port"),
                              "description": e.get("comment") or e.get("description"), "interface": e.get("interface")})
+    # Резервации DHCP. В старых срезах чтения не было (или оно не удалось) — тогда None: «нечем проверить»
+    reservations = None
+    if "dhcp_hosts" in data and "dhcp_hosts" not in (raw.get("errors") or {}):
+        reservations = [{"mac": (h.get("mac") or "").lower(), "ip": h.get("ip")}
+                        for h in _list(data.get("dhcp_hosts")) if isinstance(h, dict) and h.get("mac")]
     return {
         "kind": "keenetic",
         "model": version.get("model") or version.get("device"),
         "firmware": version.get("title") or version.get("release"),
         "clients": clients,
         "forwards": forwards,
+        "reservations": reservations,
         "errors": raw.get("errors", {}),
     }
