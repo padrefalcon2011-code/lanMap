@@ -487,6 +487,45 @@ IGD_DESC = """<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"
 </serviceList></device></deviceList></device></deviceList></device></root>"""
 
 
+class StatusCascadeTest(unittest.TestCase):
+    """Отметки владельца не теряются, когда ключ камеры (MAC#серийник) плавает."""
+    M1, M2 = "00:00:5E:00:53:21", "00:00:5E:00:53:22"
+
+    def match(self, keys, statuses):
+        from lanmap import security
+        return security._match_statuses("CAMERA_ONVIF_ANON", keys, statuses)
+
+    def test_moved_by_ip(self):
+        saved = {f"CAMERA_ONVIF_ANON|{self.M1}#S1": {"status": "accepted", "ips": ["192.0.2.10"]}}
+        got = self.match([(f"{self.M2}#S2", ["192.0.2.10"]), (f"{self.M2}#S3", ["192.0.2.11"])], saved)
+        self.assertEqual(got, [(f"CAMERA_ONVIF_ANON|{self.M1}#S1", "ip"), (None, None)])
+
+    def test_ip_before_serial(self):
+        # Серийник S1 «перескочил» на другую камеру — адрес главнее
+        saved = {f"CAMERA_ONVIF_ANON|{self.M1}#S1": {"status": "accepted", "ips": ["192.0.2.10"]}}
+        got = self.match([(f"{self.M1}#S1", ["192.0.2.11"]), (self.M1, ["192.0.2.10"])], saved)
+        self.assertEqual(got[0], (f"CAMERA_ONVIF_ANON|{self.M1}#S1", None))  # точный ключ — первым делом
+        self.assertEqual(got[1], (None, None))  # одна отметка — одной находке
+
+    def test_shared_mac_is_ambiguous(self):
+        saved = {f"CAMERA_ONVIF_ANON|{self.M1}#S9": {"status": "accepted"}}  # старая запись без адресов
+        got = self.match([(f"{self.M1}#S1", ["192.0.2.10"]), (f"{self.M1}#S2", ["192.0.2.11"])], saved)
+        self.assertEqual(got, [(None, None), (None, None)])  # MAC у двух находок — не угадываем
+
+    def test_set_status_replaces_moved_mark(self):
+        from lanmap import security
+        old = f"{self.M1}#S1"
+        security.set_status("CAMERA_ONVIF_ANON", old, "accepted", "тест", ips=["192.0.2.10"])
+        new = f"{self.M2}#S2"
+        (su, via), = self.match([(new, ["192.0.2.10"])], security.load_statuses())
+        self.assertEqual((su, via), (security.uid("CAMERA_ONVIF_ANON", old), "ip"))
+        security.set_status("CAMERA_ONVIF_ANON", new, "open", replace=su)  # снять отметку, найденную по адресу
+        self.assertEqual(self.match([(new, ["192.0.2.10"])], security.load_statuses()), [(None, None)])
+        entry = security.set_status("CAMERA_ONVIF_ANON", new, "accepted", ips=["192.0.2.10"])
+        self.assertEqual((entry["mac"], entry["serial"], entry["ips"]), (self.M2, "S2", ["192.0.2.10"]))
+        security.set_status("CAMERA_ONVIF_ANON", new, "open")
+
+
 class ChecklistTest(unittest.TestCase):
     """Чек-лист E1–E9: четыре исхода и «был X, стал Y»."""
 

@@ -483,7 +483,13 @@ def _status_chip(f: dict) -> str:
         return ""
     ico, text, cls = STATUS_CHIPS[f["status"]]
     reason = f' — {f["reason"]}' if f.get("reason") else ""
+    via = STATUS_VIA.get(f.get("status_via") or "")
+    if via:
+        reason += f" (отметка найдена {via}: ключ устройства сменился)"
     return f'<span class="st {cls}" title="{e(text + reason)}">{icon(ico, "s")}{e(text)}</span>'
+
+
+STATUS_VIA = {"ip": "по адресу", "serial": "по серийному номеру", "mac": "по MAC"}
 
 
 def plural(n: int, forms: tuple[str, str, str]) -> str:

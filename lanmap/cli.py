@@ -185,7 +185,7 @@ def cmd_finding(args) -> int:
     if not targets:
         raise SystemExit(f"В последнем срезе нет находки {check} для «{args.target}». Список: python -m lanmap finding list")
     for f in targets:
-        security.set_status(check, f["key"], args.status, args.reason)
+        security.set_status(check, f["key"], args.status, args.reason, ips=f.get("ips"), replace=f.get("status_uid"))
         print(f'{check} · {f["title"]}: {security.STATUSES[args.status]}')
     from lanmap.build import build
     build(snap)

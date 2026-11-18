@@ -500,7 +500,9 @@ def load_statuses() -> dict:
     return data.get("findings") or {}
 
 
-def set_status(check_id: str, key: str, status: str, reason: str | None = None) -> dict:
+def set_status(check_id: str, key: str, status: str, reason: str | None = None, ips: list[str] | None = None,
+               replace: str | None = None) -> dict:
+    """Отметка владельца. ips — адреса устройства (якорь каскада), replace — uid отметки, сработавшей по каскаду."""
     if check_id not in BY_ID:
         raise ValueError(f"Нет такой проверки: {check_id}. Есть: {', '.join(BY_ID)}")
     if status not in STATUSES:
@@ -508,6 +510,9 @@ def set_status(check_id: str, key: str, status: str, reason: str | None = None) 
     data = read_json(statuses_path(), {}) or {}
     items = data.setdefault("findings", {})
     u = uid(check_id, key)
+    # Отметка могла сработать по адресу или серийнику (каскад): снимаем именно её, иначе она продолжит переноситься
+    if replace and replace != u:
+        items.pop(replace, None)
     if status == "open":
         items.pop(u, None)
         entry = {"status": "open"}
@@ -515,9 +520,68 @@ def set_status(check_id: str, key: str, status: str, reason: str | None = None) 
         entry = {"status": status, "updated": now_iso()}
         if reason:
             entry["reason"] = reason
+        # Якоря для каскада: по ним отметка найдётся, даже если ключ устройства сменится
+        mac, _, serial = key.partition("#")
+        if ips:
+            entry["ips"] = list(ips)
+        if mac and not mac.startswith("ip:"):
+            entry["mac"] = mac
+        if serial:
+            entry["serial"] = serial
         items[u] = entry
     write_json(statuses_path(), data)
     return entry
+
+
+def _anchor_sets(key: str, ips=None) -> dict[str, set[str]]:
+    mac, _, serial = key.partition("#")
+    ip_set = set(ips or [])
+    if mac.startswith("ip:"):
+        ip_set.add(mac[3:])
+        mac = ""
+    return {"ip": ip_set, "serial": {serial} if serial else set(), "mac": {mac.upper()} if mac else set()}
+
+
+def _match_statuses(check_id: str, keys: list[tuple[str, list[str]]], statuses: dict) -> list[tuple[str | None, str | None]]:
+    """Какая отметка владельца относится к каждой находке проверки → [(uid отметки, как найдена)].
+
+    Сначала точное совпадение ключа. Остальные — каскадом, как changes.match: адрес, серийник, MAC — и только
+    когда признак уникален с обеих сторон. Ключ камер с общим MAC (MAC#серийник) плавает, а адрес после
+    закрепления в DHCP стабилен, поэтому адрес идёт раньше серийника. Одна отметка — одной находке.
+    """
+    saved = {u: e for u, e in statuses.items() if u.partition("|")[0] == check_id}
+    out: list[tuple[str | None, str | None]] = [(None, None)] * len(keys)
+    left = []
+    for i, (key, _) in enumerate(keys):
+        u = uid(check_id, key)
+        if u in saved:
+            out[i] = (u, None)
+            saved.pop(u)
+        else:
+            left.append(i)
+    anchors = {u: _anchor_sets(u.partition("|")[2], e.get("ips")) for u, e in saved.items()}
+    for u, e in saved.items():
+        if e.get("serial"):
+            anchors[u]["serial"].add(e["serial"])
+        if e.get("mac"):
+            anchors[u]["mac"].add(e["mac"].upper())
+    mine = {i: _anchor_sets(keys[i][0], keys[i][1]) for i in left}
+    for via in ("ip", "serial", "mac"):
+        by_value_f: dict[str, list[int]] = {}
+        by_value_s: dict[str, list[str]] = {}
+        for i in left:
+            for v in mine[i][via]:
+                by_value_f.setdefault(v, []).append(i)
+        for u in saved:
+            for v in anchors[u][via]:
+                by_value_s.setdefault(v, []).append(u)
+        for v, fs in by_value_f.items():
+            ss = by_value_s.get(v) or []
+            if len(fs) == 1 and len(ss) == 1 and fs[0] in left and ss[0] in saved:
+                out[fs[0]] = (ss[0], via)
+                left.remove(fs[0])
+                saved.pop(ss[0])
+    return out
 
 
 def _after(a: str | None, b: str | None) -> bool:
@@ -566,10 +630,16 @@ def evaluate(model: dict, snapshot: Path, tested: set[int] | None = None, status
         if not ok:
             skipped.setdefault(check.id, check.needs or "в срезе нет нужных данных")
             continue
-        for h in hits:
+        matched = _match_statuses(check.id, [(h["key"], h["ips"]) for h in hits], statuses)
+        for h, (su, via) in zip(hits, matched):
             u = uid(check.id, h["key"])
-            findings.append({"id": check.id, "uid": u, "priority": h.pop("priority", check.priority), **h,
-                             **_effective(statuses.get(u), started)})
+            f = {"id": check.id, "uid": u, "priority": h.pop("priority", check.priority), **h,
+                 **_effective(statuses.get(su) if su else None, started)}
+            if su:
+                f["status_uid"] = su
+            if via:
+                f["status_via"] = via
+            findings.append(f)
     findings.sort(key=lambda f: (f["status"] in QUIET_STATUSES, f["priority"], f["id"], _ip_key(f["ips"])))
     return {"findings": findings, "evaluated": evaluated, "skipped": skipped}
 
