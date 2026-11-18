@@ -375,7 +375,70 @@ def _status_chip(f: dict) -> str:
     return f'<span class="st {cls}" title="{e(text + reason)}">{icon(ico, "s")}{e(text)}</span>'
 
 
-def _finding_card(check, items: list[dict], present: set[str], router_kind: str | None) -> str:
+def plural(n: int, forms: tuple[str, str, str]) -> str:
+    """1 дверь, 2 двери, 5 дверей."""
+    k = 0 if n % 10 == 1 and n % 100 != 11 else 1 if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else 2
+    return f"{n} {forms[k]}"
+
+
+def _dev_node(items: list[dict], sub: str) -> str:
+    """Узел схемы «устройства находки»: до трёх — по именам, больше — числом."""
+    types = {type_icon(f.get("type")) for f in items}
+    ico = types.pop() if len(types) == 1 else "devices"
+    color = GROUP_COLORS.get(GROUPS.get(ico, ""), "var(--accent)") if ico != "devices" else "var(--accent)"
+    names = (", ".join(f["title"] for f in items) if len(items) <= 3
+             else plural(len(items), ("устройство", "устройства", "устройств")))
+    return (f'<div class="sn dev" style="--g:{color}"><span class="snc">{icon(ico)}</span><b>{e(names)}</b>'
+            f'{"<small>" + e(sub) + "</small>" if sub else ""}</div>')
+
+
+def _scheme(check, items: list[dict]) -> str:
+    """Схема «кто → куда»: узлы и подписанные стрелки."""
+    if not check.scheme:
+        return ""
+    n_fw = sum(len(f.get("forwards") or []) for f in items)
+    parts = []
+    for i, (ico, label, sub, tone) in enumerate(check.scheme):
+        if i:
+            text, way = check.links[i - 1] if i - 1 < len(check.links) else ("", "r")
+            text = text.replace("{forwards}", plural(n_fw, ("дверь", "двери", "дверей")) if n_fw else "двери")
+            parts.append(f'<div class="sl {way} {tone or check.scheme[i - 1][3]}"><small>{e(text)}</small>'
+                         f'{icon("arrow")}</div>')
+        if ico == "@dev":
+            parts.append(_dev_node(items, sub))
+        else:
+            parts.append(f'<div class="sn {tone}"><span class="snc">{icon(ico)}</span><b>{e(label)}</b>'
+                         f'{"<small>" + e(sub) + "</small>" if sub else ""}</div>')
+    return f'<div class="scheme" role="img" aria-label="{e(check.risk)}">{"".join(parts)}</div>'
+
+
+def _dev_row(check, f: dict, present: set[str], rvendor: str | None) -> str:
+    """Устройство находки: строка, по нажатию — инструкция именно для него и команда отметки."""
+    conf = (f'<span class="conf {f["confidence"]}" title="Степень подтверждения">'
+            f'{e(sec_mod.CONFIDENCE_NAMES[f["confidence"]])}</span>')
+    ip = f'<span class="ip mono">{e(", ".join(f["ips"]))}</span>' if f.get("ips") else ""
+    color = GROUP_COLORS.get(GROUPS.get(type_icon(f.get("type")), ""), "inherit")
+    goto = (f'<button class="act goto" data-goto="{e(f["key"])}" title="Показать плитку устройства">'
+            f'{icon("open", "s")}</button>' if f["key"] in present else "")
+    steps, exact = sec_mod.device_steps(check, f, rvendor)
+    ol = "".join(f"<li>{e(s)}</li>" for s in steps) + f'<li class="vfy">{e(check.verify)}</li>'
+    kind = (f'<span class="vend">{icon("check", "s")}под {e(f.get("vendor") or "это устройство")}</span>' if exact
+            else f'<span class="vend gen">{icon("info", "s")}общая инструкция: названия пунктов у разных '
+                 f'производителей отличаются</span>')
+    target = f["ips"][0] if f.get("ips") else f["key"]
+    cmd = f'python -m lanmap finding set {check.id} {target} accepted --reason "…"'
+    quiet = " quiet" if f["status"] in sec_mod.QUIET_STATUSES else ""
+    return (f'<details class="drow{quiet}"><summary>{icon("chevron", "s chev")}'
+            f'<span class="who"><span style="color:{color};display:inline-flex">{icon(type_icon(f.get("type")))}</span>'
+            f'{e(f["title"])}</span>{ip}<span class="det">{e(f["detail"])}</span>{conf}{_status_chip(f)}{goto}</summary>'
+            f'<div class="dbody">{kind}<ol>{ol}</ol>'
+            f'<div class="cli">Отметить (in_progress, fixed, accepted — оставляю осознанно): <code>{e(cmd)}</code>'
+            f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
+            f'<span class="lbl">копировать</span></button></div></div></details>')
+
+
+def _finding_card(check, items: list[dict], present: set[str], rvendor: str | None) -> str:
+    """Карточка проверки в виде инфографики: схема, чем грозит, план, устройства с инструкциями."""
     live = [f for f in items if f["status"] not in sec_mod.QUIET_STATUSES]
     prio = min(f["priority"] for f in (live or items))
     who = (f'<span class="facet {"net" if check.who == "internet" else ""}" '
@@ -384,31 +447,27 @@ def _finding_card(check, items: list[dict], present: set[str], router_kind: str 
                      f'{icon(STAKE_ICONS[x])}</span>' for x in check.stake)
     crit = "".join(f'<span class="pc" title="{e(c + ": " + sec_mod.CRITERIA[c])}">{e(c)}</span>' for c in check.criteria)
 
-    rows = []
-    for f in items:
-        conf = (f'<span class="conf {f["confidence"]}" title="Степень подтверждения">'
-                f'{e(sec_mod.CONFIDENCE_NAMES[f["confidence"]])}</span>')
-        ip = f'<span class="ip mono">{e(", ".join(f["ips"]))}</span>' if f.get("ips") else ""
-        rows.append(f'<div class="crow">{_who(f, present)}{ip}<span class="det">{e(f["detail"])}</span>{conf}'
-                    f'{_status_chip(f)}</div>')
-
-    hints = sec_mod.vendor_hints(check, items, router_kind if check.id == "UPNP_PORT_MAPPINGS" else None)
-    steps = "".join(f"<li>{e(x)}</li>" for x in check.steps)
-    hint_html = "".join(f'<div class="note">{icon("info", "s")}<span>{e(h)}</span></div>' for h in hints)
-    target = items[0]["ips"][0] if len(items) == 1 and items[0].get("ips") else "all"
-    cmd = f'python -m lanmap finding set {check.id} {target} accepted --reason "…"'
-    howto = (f'<details class="howto"><summary>{icon("wrench", "s")}Что делать</summary><ol>{steps}</ol>{hint_html}'
-             f'<div class="hgrid"><div class="hbox"><b>{icon("alert", "s")}Что может сломаться</b>{e(check.breaks)}</div>'
-             f'<div class="hbox"><b>{icon("undo", "s")}Как вернуть</b>{e(check.rollback)}</div>'
-             f'<div class="hbox"><b>{icon("check", "s")}Как убедиться</b>{e(check.verify)}</div></div>'
-             f'<div class="cli">Отметить (in_progress, fixed, accepted — оставляю осознанно): <code>{e(cmd)}</code>'
-             f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
-             f'<span class="lbl">копировать</span></button></div></details>')
+    threat = f'<span class="tarr">{icon("arrow", "s")}</span>'.join(
+        f'<span class="tch">{icon(ico)}{e(text)}</span>' for ico, text in check.threat)
+    types = {type_icon(f.get("type")) for f in items}
+    dev_ico = types.pop() if len(types) == 1 else "devices"
+    todo = "".join(f'<li><span class="nm">{i}</span>{icon(dev_ico if ico == "@dev" else ico)}<span>{e(text)}</span></li>'
+                   for i, (ico, text) in enumerate(check.todo, 1))
+    rows = "".join(_dev_row(check, f, present, rvendor) for f in items)
+    more = (f'<details class="more"><summary>{icon("info", "s")}Подробнее</summary><p class="frisk">{e(check.risk)}</p>'
+            f'<div class="hgrid"><div class="hbox"><b>{icon("alert", "s")}Что может сломаться</b>{e(check.breaks)}</div>'
+            f'<div class="hbox"><b>{icon("undo", "s")}Как вернуть</b>{e(check.rollback)}</div>'
+            f'<div class="hbox"><b>{icon("check", "s")}Как убедиться</b>{e(check.verify)}</div></div></details>')
+    note = f'<div class="fnote">{icon("info", "s")}<span>{e(check.note)}</span></div>' if check.note else ""
     return (f'<article class="scard p{prio}{" quiet" if not live else ""}" id="sec-{e(check.id)}">'
-            f'<span class="fico">{icon(check.icon)}</span>'
-            f'<div class="fhead"><h3>{e(check.title)}</h3><span class="prio">{icon("alert", "s")}'
-            f'{e(sec_mod.PRIORITY_NAMES[prio])}</span><span class="facets">{who}<i class="sep"></i>{stakes}</span>{crit}</div>'
-            f'<p class="frisk">{e(check.risk)}</p><div class="fobjs">{"".join(rows)}</div>{howto}</article>')
+            f'<div class="fhead"><span class="fico">{icon(check.icon)}</span><h3>{e(check.title)}</h3>'
+            f'<span class="prio">{icon("alert", "s")}{e(sec_mod.PRIORITY_NAMES[prio])}</span>'
+            f'<span class="facets">{who}<i class="sep"></i>{stakes}</span>{crit}</div>'
+            f'{_scheme(check, items)}'
+            f'{"<div class=threat><span class=lbl2>Чем грозит</span>" + threat + "</div>" if threat else ""}'
+            f'{"<ol class=todo>" + todo + "</ol>" if todo else ""}'
+            f'<div class="fobjs"><span class="lbl2">{icon("wrench", "s")}Где что нажать — открой устройство</span>{rows}</div>'
+            f'{note}{more}</article>')
 
 
 def _security(model: dict) -> str:
@@ -441,8 +500,8 @@ def _security(model: dict) -> str:
         quiet = all(f["status"] in sec_mod.QUIET_STATUSES for f in items)
         return quiet, min(f["priority"] for f in items), list(sec_mod.BY_ID).index(cid)
 
-    router_kind = (model.get("router") or {}).get("kind")
-    cards = "".join(_finding_card(sec_mod.BY_ID[cid], by_check[cid], present, router_kind)
+    rvendor = sec_mod.router_vendor(model)
+    cards = "".join(_finding_card(sec_mod.BY_ID[cid], by_check[cid], present, rvendor)
                     for cid in sorted(by_check, key=order))
     if not live:
         cards = f'<div class="ok-big">{icon("check", "l")}Открытых находок нет.</div>' + cards

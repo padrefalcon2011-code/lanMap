@@ -48,6 +48,9 @@ ICONS = r"""<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
 <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
 <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.5 6.5a4 4 0 0 0 5 5L21 13l-8 8-3-3 0.5-1.5a4 4 0 0 0-5-5L4 13 3 10l8-8 3 3z"/></symbol>
 <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+<symbol id="i-cash" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9.5v0.01M18 14.5v0.01"/></symbol>
+<symbol id="i-bot" viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4.5M12 4.5h0.01M9.5 13v1M14.5 13v1M2.5 12.5v3M21.5 12.5v3"/></symbol>
+<symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></symbol>
 </defs></svg>""".replace("{DEVICE_ICONS}", DEVICE_ICONS)
 
 CSS = r"""
@@ -226,14 +229,49 @@ border-radius:8px;padding:4px 9px;text-decoration:none;cursor:pointer}
 /* безопасность: приоритет — цветом, иконкой и словом */
 .p1{--p:#d03b3b;--pt:var(--crit)}.p2{--p:#ec835a;--pt:var(--serious)}.p3{--p:#fab219;--pt:var(--warn-text)}
 .cnt.p1,.cnt.p2,.cnt.p3,.pc.p1,.pc.p2,.pc.p3{background:color-mix(in srgb,var(--p) 16%,var(--card));color:var(--pt);font-weight:600}
-.scard{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;padding:12px 14px;border:1px solid var(--line);
+.scard{display:flex;flex-direction:column;gap:12px;padding:12px 14px;border:1px solid var(--line);
 border-left:6px solid var(--p);border-radius:12px;margin:10px 0}
 .scard.quiet{opacity:.6}
-.fico{grid-row:span 4;width:60px;height:60px;border-radius:16px;display:grid;place-items:center;color:var(--p);
+.fico{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;color:var(--p);flex:none;
 background:linear-gradient(150deg,color-mix(in srgb,var(--p) 10%,var(--card)),color-mix(in srgb,var(--p) 26%,var(--card)))}
-.fico svg.i{width:36px;height:36px}.fico svg.i .d{opacity:.28}
+.fico svg.i{width:28px;height:28px}.fico svg.i .d{opacity:.28}
 .fhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.fhead h3{margin:0;font-size:15px;flex:1 1 240px}
+.fhead h3{margin:0;font-size:16px;flex:1 1 240px}
+/* инфографика: схема «кто → куда» */
+.scheme{display:flex;align-items:flex-start;gap:4px;padding:4px 0}
+.sn{display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;width:150px;flex:none;--c:var(--fg);--cb:var(--chip)}
+.sn.crit{--c:var(--crit);--cb:var(--crit-soft)}.sn.warn{--c:var(--warn-text);--cb:var(--warn-soft)}
+.sn.dev{--c:var(--g);--cb:color-mix(in srgb,var(--g) 16%,var(--card));width:190px}
+.snc{width:60px;height:60px;border-radius:50%;display:grid;place-items:center;background:var(--cb);color:var(--c)}
+.snc svg.i{width:34px;height:34px}
+.sn b{font-size:14px;line-height:1.25;word-break:break-word}.sn small{font-size:12px;color:var(--muted)}
+.sl{flex:1 1 60px;min-width:60px;display:flex;flex-direction:column;align-items:center;gap:0;padding-top:12px;color:var(--muted)}
+.sl small{font-size:12px;text-align:center;line-height:1.2}.sl svg.i{width:34px;height:28px}
+.sl.l svg.i{transform:scaleX(-1)}.sl.crit{color:var(--crit)}.sl.warn{color:var(--warn-text)}
+.lbl2{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:5px;margin-right:4px}
+.threat{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tch{display:inline-flex;align-items:center;gap:7px;padding:7px 12px;border-radius:10px;background:var(--chip);font-size:13px}
+.tch svg.i{color:var(--pt)}.tarr{color:var(--faint);display:inline-flex}
+.todo{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px}
+.todo li{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font-size:13.5px}
+.todo li svg.i{color:var(--accent);width:24px;height:24px}
+.nm{width:26px;height:26px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;
+font-size:13px;font-weight:700;flex:none}
+.fobjs{display:flex;flex-direction:column;gap:4px}
+.drow{border:1px solid var(--line);border-radius:10px}.drow.quiet{opacity:.6}
+.drow>summary{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px;cursor:pointer;list-style:none}
+.drow>summary::-webkit-details-marker{display:none}
+.drow .chev{color:var(--accent);transform:rotate(-90deg);transition:transform .15s}.drow[open] .chev{transform:none}
+.drow .who{display:inline-flex;align-items:center;gap:6px;font-weight:600}
+.drow .det{color:var(--muted);font-size:12px}.drow .goto{margin-left:auto;padding:3px 6px}
+.dbody{padding:2px 14px 10px 36px}
+.dbody ol{margin:6px 0;padding-left:20px;font-size:13px;line-height:1.5}.dbody li{margin:3px 0}
+.dbody li.vfy{list-style:none;margin-left:-20px;color:var(--good)}.dbody li.vfy::before{content:"✓ ";font-weight:700}
+.vend{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--good);font-weight:600}
+.vend.gen{color:var(--muted);font-weight:400}
+.fnote{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.more>summary{cursor:pointer;color:var(--accent);font-size:13px;display:inline-flex;align-items:center;gap:6px;list-style:none}
+.more>summary::-webkit-details-marker{display:none}
 .prio{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;
 background:var(--p);color:#fff;white-space:nowrap}
 .p3 .prio,.prio.p3{color:#2b2100}.p2 .prio{color:#2b1200}
@@ -241,17 +279,11 @@ background:var(--p);color:#fff;white-space:nowrap}
 .facet{display:inline-grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--chip);color:var(--fg)}
 .facet.net{background:var(--crit-soft);color:var(--crit)}
 .facet+.facet.stake{margin-left:0}.facets .sep{width:1px;height:26px;background:var(--line);margin:0 2px}
-.frisk{margin:0;font-size:13.5px;line-height:1.5;max-width:95ch}
-.fobjs .crow{padding:3px 6px}
-.fobjs .det{color:var(--muted);font-size:12px}
+.frisk{margin:8px 0 0;font-size:13.5px;line-height:1.5;max-width:95ch}
 .conf{font-size:11px;padding:1px 7px;border-radius:999px;background:var(--chip);color:var(--muted);white-space:nowrap}
 .conf.likely{background:var(--warn-soft);color:var(--warn-text)}.conf.verify{border:1px dashed var(--faint)}
 .st{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--chip)}
 .st.crit{background:var(--crit-soft);color:var(--crit)}.st.good{color:var(--good)}
-.howto>summary{cursor:pointer;color:var(--accent);font-size:13px;display:inline-flex;align-items:center;gap:6px;list-style:none}
-.howto>summary::-webkit-details-marker{display:none}
-.howto ol{margin:8px 0;padding-left:22px;font-size:13px;line-height:1.5}.howto li{margin:3px 0}
-.howto .note{color:var(--fg)}
 .hgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin:8px 0}
 .hbox{background:var(--chip);border-radius:10px;padding:8px 10px;font-size:12.5px;line-height:1.45}
 .hbox b{display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:12px}
@@ -274,8 +306,11 @@ footer{color:var(--muted);text-align:center;padding:20px;font-size:12px}
 .flash{animation:flash 1.4s ease}
 @keyframes flash{0%,40%{box-shadow:0 0 0 3px var(--accent)}100%{box-shadow:var(--shadow)}}
 @media (max-width:560px){.gfilters{grid-template-columns:repeat(3,1fr);gap:10px}.gf .badge{top:5px;right:5px;min-width:24px;
-height:24px;line-height:24px;font-size:13px}.wrap{padding:12px}.scard{grid-template-columns:auto 1fr}.scard>*:not(.fico):not(.fhead){grid-column:1/-1}
-.fico{grid-row:auto;width:46px;height:46px}.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}
+height:24px;line-height:24px;font-size:13px}.wrap{padding:12px}
+.scheme{flex-direction:column;align-items:stretch}.sn,.sn.dev{width:auto;flex-direction:row;text-align:left;gap:10px}
+.sn small{margin-left:auto}.snc{width:44px;height:44px}.snc svg.i{width:26px;height:26px}
+.sl{flex-direction:row;padding:0 0 0 10px;gap:8px;min-height:34px}.sl svg.i{width:26px;transform:rotate(90deg)}
+.sl.l svg.i{transform:rotate(-90deg)}.dbody{padding-left:14px}.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}
 main.list .thead{grid-template-columns:auto 1fr auto;grid-template-areas:"icon main side" "marks marks marks"}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """

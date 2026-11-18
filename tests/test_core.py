@@ -398,6 +398,29 @@ class SecurityTest(unittest.TestCase):
         self.assertEqual(upnp[0]["key"], "00:00:5E:00:53:0D")
         self.assertTrue(upnp[0]["router_based"])
 
+    def test_card_lists_every_device_with_own_steps(self):
+        """Карточка перечисляет все устройства; у каждого своя инструкция: под производителя или общая."""
+        import re as _re
+        from lanmap import report
+        fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
+        m = self.net(router={"forwards": [fw, {**fw, "port": 50001, "to_ip": "192.0.2.10", "to_port": 80}]})
+        self.run_checks(m)
+        html_ = report._security(m)
+        card = _re.search(r'<article[^>]*id="sec-UPNP_PORT_MAPPINGS".*?</article>', html_, _re.S).group(0)
+        rows = _re.findall(r'<details class="drow.*?</details>', card, _re.S)
+        self.assertEqual(len(rows), 2)
+        nas = next(r for r in rows if "192.0.2.20" in r)
+        cam = next(r for r in rows if "192.0.2.10" in r)
+        self.assertIn("Конфигурация маршрутизатора", nas)      # путь Synology — только у NAS
+        self.assertNotIn("Конфигурация маршрутизатора", cam)
+        self.assertIn("Автонастройка роутера", cam)           # у неизвестного — общая инструкция
+        # Модуля роутера (kind) нет — марку берём у шлюза: подсказка Keenetic у обоих
+        self.assertIn("набор компонентов", nas)
+        self.assertIn("набор компонентов", cam)
+        self.assertIn("2 двери", card)                         # число пробросов на стрелке схемы
+        self.assertEqual(report.plural(5, ("дверь", "двери", "дверей")), "5 дверей")
+        self.assertEqual(report.plural(21, ("дверь", "двери", "дверей")), "21 дверь")
+
     def test_missing_raw_is_not_clean(self):
         sec = self.run_checks(self.net(), onvif=False, smb=False)
         self.assertFalse(sec["evaluated"]["CAMERA_ONVIF_ANON"])
