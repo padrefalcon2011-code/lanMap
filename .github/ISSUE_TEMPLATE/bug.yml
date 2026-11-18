@@ -1,0 +1,28 @@
+name: "🐞 Ошибка / Bug"
+description: Что-то сломалось или работает не так
+title: "[Ошибка] <кратко>"
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ Репозиторий публичный. **Не вставляй пароли, MAC-адреса, имена устройств и внешние IP.**
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло и что ожидалось
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Команда и вывод
+      description: Какую команду запускал и что она вывела (обезличь адреса).
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Windows и Python
+      placeholder: "Windows 11 24H2, Python 3.13, запуск от администратора: да/нет"
+    validations:
+      required: true

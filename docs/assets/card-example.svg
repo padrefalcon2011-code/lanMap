@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 470" width="640" height="470" role="img" aria-label="Пример карточки устройства в отчёте LanMap (выдуманные данные)">
+  <rect width="640" height="470" rx="20" fill="#eef2f7"/>
+  <g font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif">
+    <rect x="24" y="22" width="592" height="426" rx="16" fill="#ffffff" stroke="#d8dee8"/>
+    <text x="48" y="64" font-size="24" font-weight="700" fill="#1d2330">Камера у калитки</text>
+    <text x="48" y="92" font-size="16" fill="#667085">Камера Xiongmai (XM) XM530_DEMO_8M</text>
+    <rect x="48" y="106" width="58" height="24" rx="6" fill="#1a7f37"/>
+    <text x="77" y="123" text-anchor="middle" font-size="13" fill="#fff">точно</text>
+    <rect x="114" y="106" width="96" height="24" rx="6" fill="#1a7f37"/>
+    <text x="162" y="123" text-anchor="middle" font-size="13" fill="#fff">подписано</text>
+
+    <g font-size="15">
+      <text x="48" y="164" fill="#667085">IP</text><text x="168" y="164" fill="#1d2330">192.0.2.10</text>
+      <text x="48" y="190" fill="#667085">Модель</text><text x="168" y="190" fill="#1d2330">XM530_DEMO_8M</text>
+      <text x="48" y="216" fill="#667085">Прошивка</text><text x="168" y="216" fill="#1d2330">V5.00.R02 · ONVIF 21.06</text>
+      <text x="48" y="242" fill="#667085">Подключение</text><text x="168" y="242" fill="#1d2330">Wi-Fi 2,4 ГГц, сигнал −48 дБм · в сети 3 дн</text>
+    </g>
+
+    <g font-family="Consolas, Menlo, monospace" font-size="13" fill="#1d2330">
+      <rect x="48" y="262" width="78" height="24" rx="6" fill="#eef1f5"/><text x="87" y="279" text-anchor="middle">80 · HTTP</text>
+      <rect x="134" y="262" width="124" height="24" rx="6" fill="#eef1f5"/><text x="196" y="279" text-anchor="middle">554 · RTSP видео</text>
+      <rect x="266" y="262" width="104" height="24" rx="6" fill="#eef1f5"/><text x="318" y="279" text-anchor="middle">8899 · ONVIF</text>
+      <rect x="378" y="262" width="104" height="24" rx="6" fill="#eef1f5"/><text x="430" y="279" text-anchor="middle">34567 · DVRIP</text>
+    </g>
+
+    <g font-size="13" fill="#2f6fde">
+      <rect x="48" y="300" width="100" height="28" rx="6" fill="none" stroke="#2f6fde"/><text x="98" y="319" text-anchor="middle">Веб-панель</text>
+      <rect x="156" y="300" width="134" height="28" rx="6" fill="none" stroke="#2f6fde"/><text x="223" y="319" text-anchor="middle">Видео RTSP (VLC)</text>
+      <rect x="298" y="300" width="56" height="28" rx="6" fill="none" stroke="#2f6fde"/><text x="326" y="319" text-anchor="middle">IP</text>
+    </g>
+
+    <text x="48" y="358" font-size="15" fill="#2f6fde">▾ Почему так (6 улик)</text>
+    <g font-size="14" fill="#1d2330">
+      <text x="60" y="384">• ONVIF без пароля: модель и прошивка</text>
+      <text x="60" y="406">• Порт 34567 + RTSP — набор камер Xiongmai</text>
+      <text x="60" y="428" fill="#667085">ℹ MAC: Wi-Fi-модуль AltoBeam — обычно это модуль внутри</text>
+    </g>
+  </g>
+</svg>

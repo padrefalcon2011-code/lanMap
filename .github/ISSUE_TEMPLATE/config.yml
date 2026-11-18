@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 Концепция LanMap
+    url: https://github.com/padrefalcon2011-code/lanMap/blob/main/docs/CONCEPT.md
+    about: Что программа делает и чего не делает принципиально (она никогда ничего не меняет в сети)

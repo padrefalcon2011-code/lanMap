@@ -162,6 +162,15 @@ def cmd_router(args) -> int:
     if args.action == "forget":
         print("Удалено." if credentials.delete(target) else "Сохранённого входа не было.")
         return 0
+    if args.action == "probe":
+        from lanmap.routers import probe
+        net = _pick_network(None, True)
+        print("Собираю, как роутер представляется (без пароля, только чтение)…", file=sys.stderr)
+        text = probe.to_markdown(probe.probe(net))
+        print(text, flush=True)
+        print("Скопируй текст выше в заявку: https://github.com/padrefalcon2011-code/lanMap/issues/new/choose",
+              file=sys.stderr)
+        return 0
     product = keenetic.is_keenetic(host)
     if not product:
         raise SystemExit(f"По адресу {host} не отвечает Keenetic. Другие роутеры пока не поддерживаются.")
@@ -240,7 +249,8 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_confirm)
 
     p = sub.add_parser("router", help="вход в роутер (только чтение) и проверка доступа")
-    p.add_argument("action", choices=["login", "test", "forget"])
+    p.add_argument("action", choices=["login", "test", "forget", "probe"],
+                   help="probe — обезличенный «паспорт» роутера для заявки на модуль")
     p.add_argument("--host", help="адрес роутера (по умолчанию шлюз)")
     p.set_defaults(func=cmd_router)
 

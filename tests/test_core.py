@@ -161,6 +161,16 @@ class RouterTest(unittest.TestCase):
         self.assertIsNone(clean_label("02:00:5e:00:00:0a - Home network - 2026-01-02 03:04"))
         self.assertEqual(clean_label("Камера у ворот"), "Камера у ворот")
 
+    def test_probe_anonymize(self):
+        from lanmap.routers.probe import anonymize
+        text = anonymize("Location: http://192.0.2.1/ mac 00-00-5E-00-53-0B uuid:12345678-1234-1234-1234-123456789abc "
+                         "service:WANCommonInterfaceConfig:1 sid=Ab3dEf6hIj9kLm2nOp5qRs8tUv1")
+        self.assertNotIn("192.0.2.1", text)
+        self.assertNotIn("00-00-5E", text)
+        self.assertIn("<uuid>", text)
+        self.assertIn("WANCommonInterfaceConfig", text)
+        self.assertIn("<token>", text)
+
     def test_normalize_and_merge(self):
         from lanmap.routers import keenetic
         raw = {"kind": "keenetic", "data": {

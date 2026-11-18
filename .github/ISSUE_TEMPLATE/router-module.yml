@@ -1,0 +1,69 @@
+name: "🛜 Поддержка роутера / Router support"
+description: Попросить модуль для своего роутера — LanMap будет читать с него список клиентов и пробросы
+title: "[Роутер] <марка и модель>"
+labels: ["router-module", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо! Модуль роутера даёт LanMap подписи устройств, спящих клиентов, тип подключения и пробросы портов.
+        Модуль **только читает** роутер и никогда ничего на нём не меняет.
+
+        ⚠️ Репозиторий публичный. **Не вставляй пароли, MAC-адреса, имена устройств и внешние IP.**
+
+        Проще всего: запусти `python -m lanmap router probe` и вставь результат ниже — он уже обезличен.
+  - type: input
+    id: model
+    attributes:
+      label: Марка и модель роутера
+      placeholder: "например, ASUS RT-AX58U, MikroTik hAP ax², TP-Link Archer C6"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Прошивка и её версия
+      description: Видна в веб-интерфейсе роутера, обычно на главной странице или в разделе «Система».
+      placeholder: "например, Asuswrt-Merlin 3004.388.8, RouterOS 7.16, OpenWrt 24.10"
+    validations:
+      required: true
+  - type: textarea
+    id: probe
+    attributes:
+      label: Паспорт роутера
+      description: Вывод команды `python -m lanmap router probe` (без пароля, обезличен автоматически).
+      render: markdown
+    validations:
+      required: true
+  - type: checkboxes
+    id: access
+    attributes:
+      label: Какой доступ к роутеру у тебя есть?
+      description: Отметь всё, что знаешь. Если не знаешь — ничего страшного.
+      options:
+        - label: Веб-интерфейс с логином и паролем
+        - label: Можно создать отдельного пользователя только для чтения
+        - label: SSH или Telnet
+        - label: SNMP
+        - label: У роутера есть документированный API (ссылка ниже)
+  - type: textarea
+    id: docs
+    attributes:
+      label: Ссылки на документацию или API (если есть)
+      placeholder: "https://…"
+  - type: dropdown
+    id: testing
+    attributes:
+      label: Готов проверить модуль на своём роутере?
+      options:
+        - "Да, запущу и пришлю обезличенный результат"
+        - "Нет, просто прошу добавить"
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Приватность
+      options:
+        - label: Я проверил текст — в нём нет паролей, MAC-адресов, имён устройств и внешних IP
+          required: true

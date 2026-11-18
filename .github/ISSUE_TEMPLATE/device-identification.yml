@@ -1,0 +1,38 @@
+name: "🔎 Устройство не опознано / Wrong identification"
+description: LanMap не узнал устройство или узнал неверно — поможешь пополнить базу отпечатков
+title: "[Опознание] <что это за устройство>"
+labels: ["fingerprint", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ Репозиторий публичный. **Не вставляй MAC-адреса, серийные номера, имена людей и внешние IP.**
+  - type: input
+    id: actual
+    attributes:
+      label: Что это на самом деле
+      placeholder: "например, робот-пылесос Roborock S7, прошивка 4.3.5"
+    validations:
+      required: true
+  - type: input
+    id: lanmap
+    attributes:
+      label: Что показал LanMap
+      placeholder: "например, «Неопознанное устройство» или «Камера, предположение»"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Улики из карточки
+      description: Раздел «Почему так» в карточке устройства — открытые порты, mDNS-службы, UPnP, заголовки HTTP. Убери MAC и серийные номера.
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Приватность
+      options:
+        - label: В тексте нет MAC-адресов, серийных номеров, имён людей и внешних IP
+          required: true
