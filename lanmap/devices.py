@@ -342,11 +342,35 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
     from lanmap import routers
     router = routers.normalize(read_json(raw / "router.json"))
     if router:
+        def client_mac(c: dict) -> str | None:
+            m = norm_mac(c.get("mac"))
+            return aliases.get(m, m) if m else None
+
+        def same_ip(c: dict) -> bool:
+            return any(c.get("ip") in d.ips for d in devs.values() if d.mac == client_mac(c))
+
+        # Один MAC у роутера бывает с несколькими адресами: через устройство-мост в сеть выходит другое.
+        # Подпись роутера — про владельца MAC, то есть про адрес, выданный этому MAC по DHCP (или закреплённый).
+        # У адреса устройства за мостом аренды нет — подпись ему не достаётся.
+        reserved = {(norm_mac(r.get("mac")), r.get("ip")) for r in router.get("reservations") or []}
+        ips_by_mac: dict[str, set[str]] = {}
+        owner_ips: dict[str, set[str]] = {}
         for c in router["clients"]:
-            mac = norm_mac(c.get("mac"))
+            m = client_mac(c)
+            if m and c.get("ip"):
+                ips_by_mac.setdefault(m, set()).add(c["ip"])
+                if c.get("dhcp") or (norm_mac(c.get("mac")), c["ip"]) in reserved:
+                    owner_ips.setdefault(m, set()).add(c["ip"])
+        bridged = {m: ips - owner_ips[m] for m, ips in ips_by_mac.items() if len(ips) > 1 and owner_ips.get(m)}
+
+        # Сначала — записи, у которых совпали и MAC, и адрес: они точно про это устройство, и запись с чужим
+        # адресом их не перезапишет.
+        for c in sorted(router["clients"], key=lambda c: not same_ip(c)):
+            mac = client_mac(c)
             if not mac:
                 continue
-            mac = aliases.get(mac, mac)
+            if c.get("ip") in bridged.get(mac, set()):
+                c = dict(c, label=None, bridged=True)
             candidates = [d for d in devs.values() if d.mac == mac]
             dev = next((d for d in candidates if c.get("ip") in d.ips), candidates[0] if candidates else None)
             if dev is None:
@@ -354,12 +378,18 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
                 dev.facts["router_only"] = True
                 if c.get("ip"):
                     dev.ips.append(c["ip"])
-            if dev.facts.get("duplicate_mac") and c.get("label"):
-                # подпись в роутере привязана к MAC, а MAC общий — название может принадлежать соседу
+            matched_ip = bool(c.get("ip")) and c["ip"] in dev.ips
+            if dev.facts.get("router") and dev.facts.get("router_by_ip") and (not matched_ip or c.get("bridged")):
+                dev.add("router", f"Роутер видит этот MAC ещё и с адресом {c.get('ip') or '?'}: вероятно, через "
+                        "устройство подключено другое (мост)")
+                continue
+            if dev.facts.get("duplicate_mac") and c.get("label") and not matched_ip:
+                # подпись в роутере привязана к MAC, а MAC общий — без совпадения адреса название может быть соседа
                 dev.add("router", f"Подпись в роутере «{c['label']}» относится к общему MAC и может принадлежать "
                         "другому устройству — как название не используется")
                 c = dict(c, label=None)
             dev.facts["router"] = c
+            dev.facts["router_by_ip"] = matched_ip
             if c.get("active"):
                 dev.facts["alive"] = True
             if c.get("label"):

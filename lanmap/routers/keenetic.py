@@ -187,6 +187,7 @@ def normalize(raw: dict) -> dict:
             "last_seen_s_ago": h.get("last-seen"),
             "access": h.get("access"),
             "via": h.get("via"),
+            "dhcp": bool(h.get("dhcp")),   # адрес выдан этому MAC по DHCP (у устройства за мостом аренды нет)
         })
 
     forwards = []

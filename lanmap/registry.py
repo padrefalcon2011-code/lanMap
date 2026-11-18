@@ -54,12 +54,28 @@ def entry_for(data: dict, key: str | None, mac: str | None = None) -> dict | Non
     return None
 
 
-def sign(data: dict, mac: str, fields: dict, confirm: bool = True) -> dict:
+def entry_by_ip(data: dict, ips: list[str], exclude: set[str] = frozenset()) -> tuple[str, dict] | None:
+    """Запись MAC-двойника (ключ MAC#серийник) по адресу. У камер за мостом и MAC, и серийник плавают от среза
+    к срезу, а закреплённый адрес — нет. Только однозначное совпадение; записи с ключами устройств среза
+    (exclude) не берём — они уже нашлись по ключу."""
+    found = [(k, e) for k, e in data["devices"].items()
+             if "#" in k and k not in exclude and set(e.get("ips") or []) & set(ips or [])]
+    return found[0] if len(found) == 1 else None
+
+
+def sign(data: dict, mac: str, fields: dict, confirm: bool = True, ips: list[str] | None = None) -> dict:
     base, sep, serial = mac.partition("#")
     mac = norm_mac(base)
     if not mac:
         raise ValueError("нужен корректный MAC-адрес")
     mac = f"{mac}#{serial}" if sep else mac
+    if sep and ips:
+        # MAC-двойник: подпись хранит адрес; если устройство уже подписано под прежним ключом — дополняем её
+        if mac not in data["devices"]:
+            old = entry_by_ip(data, ips)
+            if old:
+                mac = old[0]
+        data["devices"].setdefault(mac, {})["ips"] = list(ips)
     entry = data["devices"].setdefault(mac, {})
     for key, value in fields.items():
         if key not in EDITABLE:

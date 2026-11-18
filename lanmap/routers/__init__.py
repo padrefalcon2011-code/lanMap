@@ -9,7 +9,8 @@
    "clients": [{"mac", "ip", "label" (подпись владельца в роутере), "hostname" (DHCP-имя),
                 "registered", "active", "segment" (домашняя/гостевая сеть), "link" (wifi/wired),
                 "ssid", "band", "ap", "rssi", "txrate", "port", "speed",
-                "uptime_s", "first_seen_s_ago", "last_seen_s_ago", "access", "via"}],
+                "uptime_s", "first_seen_s_ago", "last_seen_s_ago", "access", "via",
+                "dhcp" (адрес получен этим MAC по DHCP; устройство за мостом аренды не имеет)}],
    "forwards": [{"kind" (upnp/static), "protocol", "port", "to_ip", "to_port", "description", "interface"}],
    "reservations": [{"mac", "ip"}] — резервации DHCP (закреплённые адреса) или None, если модуль их не читает,
    "errors": {...}}

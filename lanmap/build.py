@@ -43,9 +43,14 @@ def make_model(snapshot: Path, reg: dict | None = None) -> dict:
     meta = read_json(snapshot / "meta.json", {})
     reg = reg if reg is not None else registry.load()
     devs = devices.build(snapshot, registry.aliases(reg))
+    keys = {d["key"] for d in devs}
     for dev in devs:
-        # У MAC-двойников запись по одному MAC неоднозначна: берём только запись по ключу MAC#серийник
+        # У MAC-двойников запись по одному MAC неоднозначна: берём только запись по ключу MAC#серийник,
+        # а если ключ сменился — по закреплённому адресу
         entry = registry.entry_for(reg, dev["key"], None if dev["duplicate_mac"] else dev["mac"])
+        if entry is None and dev["duplicate_mac"]:
+            found = registry.entry_by_ip(reg, dev["ips"], exclude=keys)
+            entry = found[1] if found else None
         dev["registry"] = entry
         dev["identity"] = identify.resolve(dev, entry)
         dev["actions"] = actions.build(dev)

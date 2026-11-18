@@ -129,7 +129,13 @@ def cmd_sign(args) -> int:
     data = registry.load()
     mac = _resolve_mac(args.target)
     fields = {k: getattr(args, k) for k in registry.EDITABLE if getattr(args, k, None) is not None}
-    entry = registry.sign(data, mac, fields)
+    ips = None
+    if "#" in mac:  # MAC-двойник: запомнить адрес, по нему подпись найдётся, когда ключ сменится
+        from lanmap.scan import latest_snapshot
+        snap = latest_snapshot()
+        model = read_json(snap / "devices.json", {}) if snap else {}
+        ips = next((d["ips"] for d in model.get("devices", []) if d["key"] == mac), None)
+    entry = registry.sign(data, mac, fields, ips=ips)
     if args.also_mac:
         extra = [m for m in (norm_mac(x) for x in args.also_mac) if m]
         entry["also_macs"] = sorted(set(entry.get("also_macs", [])) | set(extra))

@@ -137,6 +137,19 @@ class DevicesTest(unittest.TestCase):
         self.assertEqual(len(cams), 2)
         self.assertTrue(all(d["duplicate_mac"] for d in cams))
 
+    def test_bridge_label_goes_to_dhcp_owner(self):
+        # Камера за мостом: роутер видит один MAC с двумя адресами и подписывает оба одинаково.
+        # Подпись — владельцу MAC (адрес получен по DHCP), а не устройству за мостом.
+        snap = self._snapshot(("S1", "S2"))
+        host = {"mac": MAC_B.lower(), "name": "Камера у ворот", "registered": True, "active": True}
+        write_json(snap / "raw" / "router.json", {"kind": "keenetic", "data": {"hotspot": {"host": [
+            {**host, "ip": "192.0.2.11"}, {**host, "ip": "192.0.2.10", "dhcp": {"expires": 100}}]}}})
+        cams = {d["ips"][0]: d for d in devices.build(snap) if d["mac"] == MAC_B}
+        self.assertTrue(all(d["duplicate_mac"] for d in cams.values()))
+        self.assertEqual(cams["192.0.2.10"]["router"]["label"], "Камера у ворот")
+        self.assertIsNone(cams["192.0.2.11"]["router"]["label"])
+        self.assertEqual(cams["192.0.2.11"]["router"]["ip"], "192.0.2.11")
+
     def test_local_computer_named(self):
         devs = devices.build(self._snapshot(("S1", "S1")))
         me = next(d for d in devs if d["is_local"])
@@ -152,6 +165,20 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(registry.aliases(data), {MAC_C: MAC_B})
         with self.assertRaises(ValueError):
             registry.sign(data, MAC_B, {"trust": "maybe"})
+
+    def test_twin_found_by_ip_when_key_changes(self):
+        data = {"version": 1, "devices": {}}
+        registry.sign(data, f"{MAC_B}#S1", {"name": "Камера у ворот"}, ips=["192.0.2.10"])
+        # Ключ сменился (другой MAC моста, другой серийник) — подпись находится по адресу
+        self.assertEqual(registry.entry_by_ip(data, ["192.0.2.10"])[0], f"{MAC_B}#S1")
+        self.assertIsNone(registry.entry_by_ip(data, ["192.0.2.10"], exclude={f"{MAC_B}#S1"}))
+        # Подписать под новым ключом — дополняется прежняя запись, а не появляется вторая с тем же адресом
+        registry.sign(data, f"{MAC_C}#S2", {"place": "ворота"}, ips=["192.0.2.10"])
+        self.assertEqual(list(data["devices"]), [f"{MAC_B}#S1"])
+        self.assertEqual(data["devices"][f"{MAC_B}#S1"]["place"], "ворота")
+        registry.sign(data, f"{MAC_C}#S3", {"name": "Другая"}, ips=["192.0.2.11"])
+        data["devices"][f"{MAC_C}#S3"]["ips"].append("192.0.2.10")
+        self.assertIsNone(registry.entry_by_ip(data, ["192.0.2.10"]))  # неоднозначно — не угадываем
 
 
 class RouterTest(unittest.TestCase):
