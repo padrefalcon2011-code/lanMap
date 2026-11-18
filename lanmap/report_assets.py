@@ -141,15 +141,22 @@ padding:0 10px;height:32px;color:var(--muted)}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button.on{background:var(--accent);color:#fff}
 /* фильтр групп: крупные значки, счётчик в уголке, подпись — в подсказке */
-.gfilters{display:flex;gap:10px;flex-wrap:wrap;width:100%;padding-top:6px}
-.gf{position:relative;width:54px;height:54px;border-radius:15px;border:1px solid var(--line);background:var(--card);
-display:grid;place-items:center;cursor:pointer;color:var(--fg);padding:0;box-shadow:var(--shadow);transition:transform .12s,border-color .12s}
-.gf svg.i{width:32px;height:32px}
-.gf:hover{border-color:var(--accent);color:var(--accent);transform:translateY(-1px)}
-.gf .badge{position:absolute;top:-7px;right:-7px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--fg);
-color:var(--bg);font-size:11px;font-weight:700;line-height:20px;text-align:center;box-shadow:0 0 0 2px var(--bg)}
-.gf.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.gf.on .badge{background:#fff;color:var(--accent)}
+.gfilters{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:14px;margin:16px 0 6px}
+.gf{position:relative;aspect-ratio:1;border-radius:22px;border:2px solid transparent;cursor:pointer;padding:0;
+display:grid;place-items:center;color:var(--g);
+background:linear-gradient(150deg,color-mix(in srgb,var(--g) 10%,var(--card)),color-mix(in srgb,var(--g) 24%,var(--card)));
+box-shadow:0 2px 6px color-mix(in srgb,var(--g) 18%,transparent);transition:transform .15s,box-shadow .15s}
+.gf svg.i{width:62%;height:62%;stroke-width:1.6}
+.gf svg.i .d{opacity:.28}
+.gf:hover{transform:translateY(-3px);box-shadow:0 10px 22px color-mix(in srgb,var(--g) 30%,transparent)}
+.gf:focus-visible{outline:3px solid var(--g);outline-offset:2px}
+.gf .badge{position:absolute;top:8px;right:8px;min-width:30px;height:30px;padding:0 8px;border-radius:15px;background:var(--g);
+color:#fff;font-size:15px;font-weight:700;line-height:30px;text-align:center}
+.gf.on{background:var(--g);color:#fff;border-color:var(--g);box-shadow:0 10px 24px color-mix(in srgb,var(--g) 40%,transparent)}
+.gf.on svg.i .d{opacity:.35}
+.gf.on .badge{background:#fff;color:var(--g)}
+.gfilters.picked .gf:not(.on){opacity:.45;filter:saturate(.6)}
+.gfilters.picked .gf:not(.on):hover{opacity:1;filter:none}
 /* плавающая подсказка: наведение и фокус с клавиатуры */
 [data-tip]{position:relative}
 [data-tip]::after{content:attr(data-tip);position:absolute;left:50%;top:calc(100% + 8px);transform:translate(-50%,-3px);
@@ -171,7 +178,11 @@ details.group:not([open])>summary .chev{transform:rotate(-90deg)}
 .tile.open{grid-column:1/-1}
 .thead{display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"icon main side" "marks marks marks";gap:6px 10px;
 width:100%;text-align:left;background:none;border:0;padding:12px;cursor:pointer;align-items:center}
-.ticon{grid-area:icon;position:relative;width:54px;height:54px;border-radius:14px;background:var(--chip);display:grid;place-items:center}
+.ticon{grid-area:icon;position:relative;width:54px;height:54px;border-radius:14px;display:grid;place-items:center;color:var(--g,var(--fg));
+background:linear-gradient(150deg,color-mix(in srgb,var(--g,#888) 10%,var(--card)),color-mix(in srgb,var(--g,#888) 22%,var(--card)))}
+.ticon svg.i .d{opacity:.28}
+.gico{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:10px;color:var(--g);
+background:color-mix(in srgb,var(--g) 16%,var(--card))}
 .ticon svg.i{width:32px;height:32px}
 .ticon .dot{width:12px;height:12px}
 .ticon .dot{position:absolute;right:-2px;bottom:-2px;box-shadow:0 0 0 2px var(--card)}
@@ -215,7 +226,8 @@ footer{color:var(--muted);text-align:center;padding:20px;font-size:12px}
 .hidden{display:none!important}
 .flash{animation:flash 1.4s ease}
 @keyframes flash{0%,40%{box-shadow:0 0 0 3px var(--accent)}100%{box-shadow:var(--shadow)}}
-@media (max-width:560px){.wrap{padding:12px}.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}
+@media (max-width:560px){.gfilters{grid-template-columns:repeat(3,1fr);gap:10px}.gf .badge{top:5px;right:5px;min-width:24px;
+height:24px;line-height:24px;font-size:13px}.wrap{padding:12px}.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}
 main.list .thead{grid-template-columns:auto 1fr auto;grid-template-areas:"icon main side" "marks marks marks"}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
@@ -263,6 +275,7 @@ function apply(){const q=st.q.trim().toLowerCase();
   $('.n',g).textContent=n;if(q&&n)g.open=true;});
  $('#empty').classList.toggle('hidden',!!$('.tile:not(.hidden)'));}
 function sync(){$$('.gf').forEach(b=>b.classList.toggle('on',b.dataset.group===st.group));
+ $('.gfilters').classList.toggle('picked',!!st.group);
  $$('[data-status]').forEach(b=>b.classList.toggle('on',b.dataset.status===st.status));
  const c=$('#f-changed');if(c)c.classList.toggle('on',st.changed);$('#f-low').classList.toggle('on',st.low);apply();}
 $$('.gf').forEach(b=>b.addEventListener('click',()=>{st.group=st.group===b.dataset.group?'':b.dataset.group;sync();}));

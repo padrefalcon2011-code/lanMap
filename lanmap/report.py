@@ -11,7 +11,7 @@ import ipaddress
 from collections import Counter
 
 from lanmap.devices import connection_text
-from lanmap.identify import LEVEL_NAMES, TYPES
+from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
 from lanmap.report_assets import CSS, ICONS, JS
 
 SOURCE_NAMES = {
@@ -27,6 +27,15 @@ GROUP_ICONS = {"Сеть": "router", "Компьютеры": "computer", "Хра
                "ТВ и приставки": "tv", "Колонки": "speaker", "Печать": "printer", "Умный дом": "iot",
                "Телефоны и планшеты": "phone", "Не опознаны": "unknown", OFFLINE_GROUP: "offline"}
 GROUP_SHORT = {OFFLINE_GROUP: "Не в сети"}
+# Цвет группы — для узнаваемости вместе с иконкой (смысл не держится на одном цвете). Красный не берём:
+# он занят под опасность.
+GROUP_COLORS = {"Сеть": "#2a78d6", "Компьютеры": "#6250d6", "Хранилища": "#14a374", "Камеры": "#eb6834",
+                "ТВ и приставки": "#d6457f", "Колонки": "#d99400", "Печать": "#0e94b0", "Умный дом": "#3e9a1f",
+                "Телефоны и планшеты": "#8a4fd8", "Не опознаны": "#7a8290", OFFLINE_GROUP: "#5b6b82"}
+
+
+def gstyle(group: str) -> str:
+    return f'style="--g:{GROUP_COLORS.get(group, "#7a8290")}"'
 # Порты, открытость которых — уже повод насторожиться (подробные проверки — следующий этап)
 RISKY_PORTS = {23: "Telnet: пароль идёт открытым текстом", 5555: "ADB: удалённое управление Android без пароля"}
 MAX_TILE_PORTS = 6
@@ -223,7 +232,7 @@ def _tile(dev: dict, changes: dict | None) -> str:
     return (f'<article class="{cls}" id="d-{e(dev["key"])}" data-group="{e(ident["group"])}" data-status="{status}" '
             f'data-conf="{conf}" data-changed="{1 if items else 0}" data-search="{e(search)}">'
             f'<button class="thead" aria-expanded="false">'
-            f'<span class="ticon">{icon(type_icon(ident["type"]), "", ident["type_label"])}'
+            f'<span class="ticon" {gstyle(ident["group"])}>{icon(type_icon(ident["type"]), "", ident["type_label"])}'
             f'<i class="dot {"" if dev["alive"] else "off"}" title="{dot_label}"></i></span>'
             f'<span class="tmain"><b>{e(dev["title"])}</b>'
             f'{"<span class=sub>" + e(dev["subtitle"]) + "</span>" if dev["subtitle"] else ""}'
@@ -237,7 +246,8 @@ def _tile(dev: dict, changes: dict | None) -> str:
 
 def _who(d: dict, present: set[str]) -> str:
     """Имя устройства с иконкой; если оно есть в этом срезе — кнопка перехода к плитке."""
-    inner = f'{icon(type_icon(d.get("type")), "s")}{e(d["title"])}'
+    color = GROUP_COLORS.get(GROUPS.get(type_icon(d.get("type")), ""), "inherit")
+    inner = f'<span style="color:{color};display:inline-flex">{icon(type_icon(d.get("type")))}</span>{e(d["title"])}'
     if d["key"] in present:
         return f'<button class="who" data-goto="{e(d["key"])}" title="Показать плитку">{inner}</button>'
     return f'<span class="who">{inner}</span>'
@@ -415,15 +425,16 @@ def render(model: dict) -> str:
     count = Counter(d["identity"]["group"] for d in devs)
 
     gfilters = "".join(
-        f'<button class="gf" data-group="{e(g)}" data-tip="{e(GROUP_SHORT.get(g, g))} · {count[g]}" '
+        f'<button class="gf" {gstyle(g)} data-group="{e(g)}" data-tip="{e(GROUP_SHORT.get(g, g))} · {count[g]}" '
         f'aria-label="{e(g)}: {count[g]}">{icon(GROUP_ICONS.get(g, "unknown"))}'
         f'<span class="badge">{count[g]}</span></button>' for g in groups)
     sections = []
     for g in groups:
         tiles = "".join(_tile(d, changes) for d in devs if d["identity"]["group"] == g)
         is_open = "" if g == OFFLINE_GROUP else " open"
-        sections.append(f'<details class="group"{is_open}><summary>{icon("chevron", "s chev")}'
-                        f'{icon(GROUP_ICONS.get(g, "unknown"))}{e(g)} <span class="n">{count[g]}</span></summary>'
+        sections.append(f'<details class="group" {gstyle(g)}{is_open}><summary>{icon("chevron", "s chev")}'
+                        f'<span class="gico">{icon(GROUP_ICONS.get(g, "unknown"))}</span>{e(g)} '
+                        f'<span class="n">{count[g]}</span></summary>'
                         f'<div class="grid">{tiles}</div></details>')
     has_changes = any(((changes or {}).get("by_key") or {}).get(d["key"]) for d in devs)
     changed_btn = (f'<button class="iconbtn" id="f-changed" {tip("Только изменившиеся")}>{icon("delta", "s")}</button>'
@@ -448,6 +459,7 @@ def render(model: dict) -> str:
 </header>
 {_forwards(model)}
 {_changes(model)}
+<nav class="gfilters" aria-label="Группы устройств">{gfilters}</nav>
 <div class="bar">
   <label class="search">{icon("search", "s")}<input id="q" type="search" placeholder="IP, MAC, имя, порт…" autocomplete="off"></label>
   <span class="seg" role="group" aria-label="Состояние">
@@ -462,7 +474,6 @@ def render(model: dict) -> str:
     <button data-view="list" {tip("Список")}>{icon("list", "s")}</button>
   </span>
   <button class="iconbtn tip-l" id="expand" {tip("Развернуть / свернуть все")}>{icon("expand", "s")}</button>
-  <div class="gfilters">{gfilters}</div>
 </div>
 <main>{''.join(sections)}<p id="empty" class="note hidden">{icon("search", "s")}Ничего не найдено.</p></main>
 {_legend()}
