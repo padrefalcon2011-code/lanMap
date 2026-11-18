@@ -54,7 +54,7 @@ CSS = r"""
 :root{color-scheme:light;--bg:#f3f4f6;--card:#fff;--fg:#1b1f27;--muted:#69707d;--faint:#9aa1ad;--line:#e2e5ea;
 --chip:#eef0f4;--accent:#2a78d6;--accent-soft:#e3eefb;--good:#0ca30c;--warn:#b07a00;--warn-soft:#fff4dc;
 --crit:#d03b3b;--crit-soft:#fdeceb;--add:#2a78d6;--add-soft:#e3eefb;--shadow:0 1px 2px rgba(16,24,40,.06);
---serious:#c4561d;--warn-text:#8a6100}
+--serious:#b34a14;--warn-text:#6e4d00}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#131518;--card:#1c1f24;
 --fg:#e8eaed;--muted:#a0a7b2;--faint:#6f7680;--line:#2d3239;--chip:#262a31;--accent:#3987e5;--accent-soft:#1d2b3d;
 --good:#2fbf2f;--warn:#fab219;--warn-soft:#33290f;--crit:#e66767;--crit-soft:#3a1f1f;--add:#6da7ec;--add-soft:#1d2b3d;--shadow:none;
