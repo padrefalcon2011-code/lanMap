@@ -420,11 +420,13 @@ def _dev_row(check, f: dict, present: set[str], rvendor: str | None) -> str:
     color = GROUP_COLORS.get(GROUPS.get(type_icon(f.get("type")), ""), "inherit")
     goto = (f'<button class="act goto" data-goto="{e(f["key"])}" title="Показать плитку устройства">'
             f'{icon("open", "s")}</button>' if f["key"] in present else "")
-    steps, exact = sec_mod.device_steps(check, f, rvendor)
+    steps, exact, rname = sec_mod.device_steps(check, f, rvendor)
     ol = "".join(f"<li>{e(s)}</li>" for s in steps) + f'<li class="vfy">{e(check.verify)}</li>'
     kind = (f'<span class="vend">{icon("check", "s")}под {e(f.get("vendor") or "это устройство")}</span>' if exact
             else f'<span class="vend gen">{icon("info", "s")}общая инструкция: названия пунктов у разных '
                  f'производителей отличаются</span>')
+    if rname:
+        kind += f'<span class="vend">{icon("check", "s")}роутер — под {e(rname.capitalize())}</span>'
     target = f["ips"][0] if f.get("ips") else f["key"]
     cmd = f'python -m lanmap finding set {check.id} {target} accepted --reason "…"'
     quiet = " quiet" if f["status"] in sec_mod.QUIET_STATUSES else ""

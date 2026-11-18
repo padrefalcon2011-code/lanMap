@@ -240,8 +240,8 @@ CHECKS: list[Check] = [
         ],
         vendor_steps={
             "synology": [
-                "Нужен доступ снаружи? Замена без проброса: «Панель управления → QuickConnect» или пакет VPN Server "
-                "в «Центре пакетов». Проверь с мобильного интернета.",
+                "Нужен доступ снаружи? Замена без проброса: QuickConnect (в «Панели управления», обычно в разделе "
+                "«Внешний доступ») или пакет VPN Server в «Центре пакетов». Проверь с мобильного интернета.",
                 "«Панель управления → Внешний доступ → Конфигурация маршрутизатора»: выдели правила и удали.",
                 "Мастер настройки маршрутизатора там же повторно не запускай — он создаст правила заново.",
             ],
@@ -528,16 +528,16 @@ def _pick(options: dict[str, list[str]], vendor: str | None) -> tuple[str | None
     return None, options.get("", [])
 
 
-def device_steps(check: Check, finding: dict, router_vendor: str | None = None) -> tuple[list[str], bool]:
+def device_steps(check: Check, finding: dict, router_vendor: str | None = None) -> tuple[list[str], bool, str | None]:
     """Инструкция «куда зайти, что нажать» для одного устройства находки.
-    Возвращает (шаги, есть ли подсказка именно под этого производителя)."""
+    Возвращает (шаги, подобрана ли часть про устройство под его производителя, марка роутера, если подобрана
+    часть про роутер)."""
     name, steps = _pick({"": check.steps, **check.vendor_steps}, finding.get("vendor"))
-    exact = name is not None
+    rname = None
     if check.router_steps:
         rname, rsteps = _pick(check.router_steps, router_vendor)
         steps = steps + rsteps
-        exact = exact or rname is not None
-    return steps, exact
+    return steps, name is not None, rname
 
 
 def router_vendor(model: dict) -> str | None:

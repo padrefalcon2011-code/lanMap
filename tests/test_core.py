@@ -414,6 +414,8 @@ class SecurityTest(unittest.TestCase):
         self.assertIn("Конфигурация маршрутизатора", nas)      # путь Synology — только у NAS
         self.assertNotIn("Конфигурация маршрутизатора", cam)
         self.assertIn("Автонастройка роутера", cam)           # у неизвестного — общая инструкция
+        self.assertIn("общая инструкция", cam)                 # и значок честно говорит, что она общая
+        self.assertNotIn("общая инструкция", nas)
         # Модуля роутера (kind) нет — марку берём у шлюза: подсказка Keenetic у обоих
         self.assertIn("набор компонентов", nas)
         self.assertIn("набор компонентов", cam)

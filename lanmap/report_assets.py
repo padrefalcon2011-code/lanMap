@@ -267,7 +267,7 @@ font-size:13px;font-weight:700;flex:none}
 .dbody{padding:2px 14px 10px 36px}
 .dbody ol{margin:6px 0;padding-left:20px;font-size:13px;line-height:1.5}.dbody li{margin:3px 0}
 .dbody li.vfy{list-style:none;margin-left:-20px;color:var(--good)}.dbody li.vfy::before{content:"✓ ";font-weight:700}
-.vend{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--good);font-weight:600}
+.vend{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--good);font-weight:600;margin-right:12px}
 .vend.gen{color:var(--muted);font-weight:400}
 .fnote{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 .more>summary{cursor:pointer;color:var(--accent);font-size:13px;display:inline-flex;align-items:center;gap:6px;list-style:none}
@@ -310,7 +310,7 @@ height:24px;line-height:24px;font-size:13px}.wrap{padding:12px}
 .scheme{flex-direction:column;align-items:stretch}.sn,.sn.dev{width:auto;flex-direction:row;text-align:left;gap:10px}
 .sn small{margin-left:auto}.snc{width:44px;height:44px}.snc svg.i{width:26px;height:26px}
 .sl{flex-direction:row;padding:0 0 0 10px;gap:8px;min-height:34px}.sl svg.i{width:26px;transform:rotate(90deg)}
-.sl.l svg.i{transform:rotate(-90deg)}.dbody{padding-left:14px}.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}
+.sl.l svg.i{transform:rotate(-90deg)}.dbody{padding-left:14px}.tarr{display:none}.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}
 main.list .thead{grid-template-columns:auto 1fr auto;grid-template-areas:"icon main side" "marks marks marks"}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
