@@ -398,6 +398,10 @@ def _crit_row(c: dict, present: set[str]) -> str:
     if c.get("near"):
         body.append(f'<div class="edevs"><span class="lbl2">в одной сети с ними</span>'
                     f'{"".join(_who(d, present) for d in c["near"])}</div>')
+    if c.get("unseen"):
+        body.append(f'<div class="enote">{icon("question", "s")}<span>Ещё '
+                    f'{plural(c["unseen"], ("устройство", "устройства", "устройств"))}: роутер не сообщил, в какой '
+                    f'они сети — проверить нечем.</span></div>')
     hint = {"E1": "Подпиши в роутере или командой python -m lanmap sign <IP> --name «…».",
             "E3": "Камеры и умный дом — в гостевую или отдельную сеть, чтобы из них не было пути к ПК и NAS. "
                   "Изоляцию гостевой сети срез не проверяет.",
