@@ -8,8 +8,12 @@ WEB_HINT_PORTS = {80, 443, 5000, 5001, 8000, 8080, 8443, 8888, 9000, 10000}
 
 
 def build(dev: dict) -> list[dict]:
-    ip = dev["ips"][0]
     actions: list[dict] = []
+    if not dev["ips"]:
+        if dev.get("mac"):
+            actions.append({"kind": "copy", "label": "MAC", "value": dev["mac"], "hint": ""})
+        return actions
+    ip = dev["ips"][0]
     seen_urls = set()
     services = {s["port"]: s for s in dev["services"]}
 

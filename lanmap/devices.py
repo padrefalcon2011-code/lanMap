@@ -13,7 +13,7 @@ from pathlib import Path
 from lanmap import oui
 from lanmap.collectors import dnswire
 from lanmap.ports import service_name
-from lanmap.util import is_private_mac, read_json
+from lanmap.util import is_private_mac, norm_mac, read_json
 
 _TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 _HEADER = re.compile(r"^([A-Za-z0-9-]+):\s*(.*)$", re.M)
@@ -66,6 +66,7 @@ class _Dev:
             "upnp": {}, "onvif": {}, "http": [], "tls": [], "ssh": [], "rtsp": [], "banners": [],
             "ssdp_server": set(), "ssdp_st": set(), "wsd_types": set(), "netbios": None, "dns": set(),
             "router_names": set(), "smb": None, "ttl": None, "alive": False, "arp": False, "duplicate_mac": False,
+            "router": None, "router_only": False,
         }
         self.evidence: list[dict] = []
         self.services: dict[int, dict] = {}
@@ -337,7 +338,37 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
         me.facts["netbios"] = me.facts["netbios"] or {"computer": host, "workgroup": None}
         me.add("local", f"Это компьютер, на котором запущен LanMap: {host}", local_ip)
 
-    # 10. OUI, частный MAC, TTL
+    # 10. Данные роутера (общий формат модулей): подписи, DHCP-имена, подключение, спящие устройства
+    from lanmap import routers
+    router = routers.normalize(read_json(raw / "router.json"))
+    if router:
+        for c in router["clients"]:
+            mac = norm_mac(c.get("mac"))
+            if not mac:
+                continue
+            mac = aliases.get(mac, mac)
+            candidates = [d for d in devs.values() if d.mac == mac]
+            dev = next((d for d in candidates if c.get("ip") in d.ips), candidates[0] if candidates else None)
+            if dev is None:
+                dev = devs.setdefault(mac, _Dev(mac, mac))
+                dev.facts["router_only"] = True
+                if c.get("ip"):
+                    dev.ips.append(c["ip"])
+            if dev.facts.get("duplicate_mac") and c.get("label"):
+                # подпись в роутере привязана к MAC, а MAC общий — название может принадлежать соседу
+                dev.add("router", f"Подпись в роутере «{c['label']}» относится к общему MAC и может принадлежать "
+                        "другому устройству — как название не используется")
+                c = dict(c, label=None)
+            dev.facts["router"] = c
+            if c.get("active"):
+                dev.facts["alive"] = True
+            if c.get("label"):
+                dev.add("router", f"Подпись в роутере: «{c['label']}»")
+            if c.get("hostname") and c["hostname"] != c.get("label"):
+                dev.add("router", f"Имя, которое устройство сообщило роутеру (DHCP): {c['hostname']}")
+            dev.add("router", connection_text(c))
+
+    # 11. OUI, частный MAC, TTL
     result = []
     for dev in devs.values():
         private = is_private_mac(dev.mac)
@@ -358,6 +389,8 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
             "mac": dev.mac,
             "private_mac": private,
             "ips": sorted(dev.ips, key=ipaddress.ip_address),
+            "router": dev.facts.get("router"),
+            "router_only": bool(dev.facts.get("router_only")),
             "is_local": local_ip in dev.ips,
             "is_gateway": gateway in dev.ips if gateway else False,
             "duplicate_mac": bool(dev.facts.get("duplicate_mac")),
@@ -368,6 +401,44 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
             "evidence": dev.evidence,
         })
     return result
+
+
+def _ago(seconds) -> str:
+    if seconds is None:
+        return "?"
+    s = int(seconds)
+    if s < 120:
+        return f"{s} с"
+    if s < 7200:
+        return f"{s // 60} мин"
+    if s < 172800:
+        return f"{s // 3600} ч"
+    return f"{s // 86400} дн"
+
+
+def connection_text(c: dict) -> str:
+    """«Wi-Fi 5 ГГц «Сеть», сигнал −55 дБм · в сети 3 ч · впервые 12 дн назад» — по данным роутера."""
+    parts = []
+    if not c.get("active"):
+        parts.append("сейчас не в сети" + (f", последний раз {_ago(c['last_seen_s_ago'])} назад"
+                                          if c.get("last_seen_s_ago") else ""))
+    elif c.get("link") == "wifi":
+        wifi = "Wi-Fi" + (f" {c['band']}" if c.get("band") else "") + (f" «{c['ssid']}»" if c.get("ssid") else "")
+        if c.get("rssi") is not None:
+            wifi += f", сигнал {c['rssi']} дБм"
+        if c.get("txrate"):
+            wifi += f", {c['txrate']} Мбит/с"
+        parts.append(wifi)
+    elif c.get("link") == "wired":
+        parts.append("кабель" + (f", порт роутера {c['port']}" if c.get("port") is not None else "")
+                     + (f", {c['speed']} Мбит/с" if c.get("speed") else ""))
+    if c.get("segment"):
+        parts.append(f"сегмент «{c['segment']}»")
+    if c.get("active") and c.get("uptime_s") is not None:
+        parts.append(f"подключено {_ago(c['uptime_s'])} назад")
+    if c.get("first_seen_s_ago") is not None:
+        parts.append(f"впервые замечено {_ago(c['first_seen_s_ago'])} назад")
+    return "Роутер: " + " · ".join(parts)
 
 
 def _jsonable(facts: dict) -> dict:

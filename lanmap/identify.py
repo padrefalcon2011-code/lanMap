@@ -27,6 +27,7 @@ TYPES = {
     "printer": "Принтер / МФУ",
     "computer": "Компьютер",
     "phone": "Телефон / планшет",
+    "wearable": "Часы / браслет",
     "iot": "Умный дом",
     "unknown": "Неопознанное устройство",
 }
@@ -34,7 +35,8 @@ TYPES = {
 GROUPS = {
     "router": "Сеть", "network": "Сеть", "camera": "Камеры", "nas": "Хранилища", "tv": "ТВ и приставки",
     "media": "ТВ и приставки", "speaker": "Колонки", "printer": "Печать", "computer": "Компьютеры",
-    "phone": "Телефоны и планшеты", "iot": "Умный дом", "unknown": "Не опознаны",
+    "phone": "Телефоны и планшеты", "wearable": "Телефоны и планшеты", "iot": "Умный дом",
+    "unknown": "Не опознаны",
 }
 
 FIELDS = ("type", "vendor", "model", "firmware", "os", "name")
@@ -119,7 +121,9 @@ def _cond(key: str, expected, dev: dict) -> bool:
         return _rx(expected, f.get("ssh"))
     if key == "hostname":
         nb = (f.get("netbios") or {}).get("computer")
-        return _rx(expected, list(f.get("mdns_hosts", [])) + list(f.get("dns", [])) + list(f.get("router_names", [])) + [nb])
+        r = f.get("router") or {}
+        return _rx(expected, list(f.get("mdns_hosts", [])) + list(f.get("dns", [])) + list(f.get("router_names", []))
+                   + [nb, r.get("hostname"), r.get("label")])
     raise ValueError(f"неизвестное условие в правиле: {key}")
 
 
@@ -209,6 +213,11 @@ def self_description_claims(dev: dict) -> list[dict]:
             break
     if t.get("fn"):
         claims.append(_claim("name", t["fn"], 3, "mdns", "Имя из mDNS (fn)"))
+    r = f.get("router") or {}
+    if r.get("label"):
+        claims.append(_claim("name", r["label"], 4, "router", "Подпись владельца в роутере"))
+    if r.get("hostname"):
+        claims.append(_claim("name", r["hostname"], 2, "dhcp", "Имя, сообщённое роутеру по DHCP"))
     nb = f.get("netbios") or {}
     if nb.get("computer"):
         claims.append(_claim("name", nb["computer"], 3, "netbios", "Имя компьютера NetBIOS"))

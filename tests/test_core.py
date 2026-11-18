@@ -154,7 +154,47 @@ class RegistryTest(unittest.TestCase):
             registry.sign(data, MAC_B, {"trust": "maybe"})
 
 
+class RouterTest(unittest.TestCase):
+    def test_clean_label(self):
+        from lanmap.routers.keenetic import clean_label
+        self.assertEqual(clean_label("TESTPC - Home network - 2026-01-02 03:04"), "TESTPC")
+        self.assertIsNone(clean_label("02:00:5e:00:00:0a - Home network - 2026-01-02 03:04"))
+        self.assertEqual(clean_label("Камера у ворот"), "Камера у ворот")
+
+    def test_normalize_and_merge(self):
+        from lanmap.routers import keenetic
+        raw = {"kind": "keenetic", "data": {
+            "version": {"model": "Test (KN-0000)", "title": "1.0"},
+            "interfaces": {"WifiMaster1": {"channel": 36}},
+            "hotspot": {"host": [
+                {"mac": MAC_B.lower(), "ip": "192.0.2.10", "name": "Камера у ворот", "registered": True, "active": True,
+                 "port": 2, "speed": 100, "interface": {"name": "Home"}},
+                {"mac": MAC_A.lower(), "ip": "192.0.2.20", "name": "Телефон", "registered": True, "active": True,
+                 "ap": "WifiMaster1/AccessPoint0", "ssid": "TEST", "rssi": -50, "interface": {"name": "Home"}},
+                {"mac": MAC_C.lower(), "ip": "192.0.2.30", "registered": False, "active": False}]},
+            "upnp_redirects": {"entry": [{"protocol": "tcp", "port": 50000, "to-address": "192.0.2.10", "to-port": 80}]}}}
+        n = keenetic.normalize(raw)
+        self.assertEqual(n["clients"][1]["band"], "5 ГГц")
+        self.assertEqual(n["clients"][0]["link"], "wired")
+        self.assertEqual(len(n["forwards"]), 1)
+        snap = Path(tempfile.mkdtemp(dir=TMP.name))
+        write_json(snap / "meta.json", {"interface": {"local_ip": "192.0.2.5", "gateway": "192.0.2.1"}})
+        write_json(snap / "raw" / "neighbors.json", [{"ip": "192.0.2.10", "mac": MAC_B, "state": "Reachable"}])
+        write_json(snap / "raw" / "router.json", raw)
+        devs = {d["mac"]: d for d in devices.build(snap)}
+        self.assertEqual(devs[MAC_B]["router"]["label"], "Камера у ворот")
+        self.assertTrue(devs[MAC_A]["router_only"] and devs[MAC_A]["alive"])
+        self.assertFalse(devs[MAC_C]["alive"])
+        r = identify.resolve(devs[MAC_B])
+        self.assertEqual(r["name"], "Камера у ворот")
+
+
 class NoNetworkSpecificsTest(unittest.TestCase):
+    def test_no_control_characters(self):
+        for path in list(PACKAGE_DIR.rglob("*.py")) + list(PACKAGE_DIR.rglob("*.json")):
+            bad = re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", path.read_text("utf-8"))
+            self.assertIsNone(bad, f"управляющий символ в {path}")
+
     """Жёсткое правило: в коде нет IP и MAC конкретной сети."""
 
     PRIVATE_IP = re.compile(r"\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b")

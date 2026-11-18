@@ -7,13 +7,14 @@ from __future__ import annotations
 import html
 from collections import Counter
 
+from lanmap.devices import connection_text
 from lanmap.identify import LEVEL_NAMES
 
 SOURCE_NAMES = {
     "registry": "реестр владельца", "upnp": "UPnP", "onvif": "ONVIF", "mdns": "mDNS", "netbios": "NetBIOS",
     "router_dns": "DNS роутера", "dns": "обратный DNS", "oui": "MAC (IEEE)", "http": "HTTP", "tls": "TLS",
     "ssh": "SSH", "rtsp": "RTSP", "ssdp": "SSDP", "wsd": "WS-Discovery", "smb": "SMB", "mac": "MAC",
-    "ttl": "TTL", "banner": "баннер", "local": "система",
+    "ttl": "TTL", "banner": "баннер", "local": "система", "router": "роутер", "dhcp": "DHCP-имя",
 }
 FIELD_NAMES = {"type": "Тип", "vendor": "Производитель", "model": "Модель", "firmware": "Прошивка",
                "os": "ОС", "name": "Имя", "group": "Группа"}
@@ -49,17 +50,26 @@ def _card(dev: dict) -> str:
         badges.append('<span class="badge warn" title="Случайный MAC телефона/планшета/ноутбука">частный MAC</span>')
     if not dev["alive"]:
         badges.append('<span class="badge muted">не отвечало</span>')
+    r = dev.get("router") or {}
+    if dev.get("router_only"):
+        badges.append('<span class="badge muted" title="Сканирование устройство не видело, о нём знает только роутер">только роутер</span>')
+    if r.get("segment") and r["segment"].lower() not in ("home", "домашняя сеть"):
+        badges.append(f'<span class="badge warn" title="Сегмент сети по данным роутера">{e(r["segment"])}</span>')
     if dev.get("duplicate_mac"):
         badges.append('<span class="badge warn" title="Тот же MAC у другого устройства: мост/ретранслятор или одинаковый MAC">общий MAC</span>')
     if len(dev["ips"]) > 1:
         badges.append(f'<span class="badge warn" title="Один MAC — несколько IP">{len(dev["ips"])} IP</span>')
 
     facts = []
-    facts.append(f'<div><span>IP</span><b>{e(", ".join(dev["ips"]))}</b></div>')
+    facts.append(f'<div><span>IP</span><b>{e(", ".join(dev["ips"]) or "—")}</b></div>')
     facts.append(f'<div><span>MAC</span><b class="mono">{e(dev["mac"] or "не получен")}</b></div>')
     for key in ("vendor", "model", "firmware", "os"):
         if ident.get(key):
             facts.append(f'<div><span>{FIELD_NAMES[key]}</span><b>{e(ident[key])}</b></div>')
+    if r:
+        facts.append(f'<div><span>Подключение</span><b>{e(connection_text(r).removeprefix("Роутер: "))}</b></div>')
+        if r.get("hostname") and r.get("hostname") != dev["title"]:
+            facts.append(f'<div><span>DHCP-имя</span><b>{e(r["hostname"])}</b></div>')
     for key in ("place", "owner", "purpose"):
         if reg.get(key):
             label = {"place": "Место", "owner": "Владелец", "purpose": "Назначение"}[key]
@@ -106,6 +116,26 @@ def _card(dev: dict) -> str:
             f'<div class="actions">{"".join(acts)}</div>{why}</article>')
 
 
+def _forwards(model: dict, devs: list[dict]) -> str:
+    router = model.get("router")
+    if not router:
+        reason = model.get("router_skipped")
+        return f'<p class="meta">Данные роутера недоступны{": " + e(reason) if reason else ""}.</p>' if reason else ""
+    head = (f'<p class="meta">Роутер {e(router.get("model") or "")}, прошивка {e(router.get("firmware") or "?")}: '
+            f'клиентов в списке {len(router["clients"])}, сейчас в сети {sum(1 for c in router["clients"] if c.get("active"))}.</p>')
+    fw = router.get("forwards") or []
+    if not fw:
+        return head + '<p class="meta">Пробросов портов из интернета внутрь сети нет.</p>'
+    by_ip = {ip: d for d in devs for ip in d["ips"]}
+    rows = "".join(
+        f'<tr><td>{e(f["kind"].upper())}</td><td>{e(f.get("protocol") or "")} {e(f.get("port") or "")}</td>'
+        f'<td>{e(by_ip[f["to_ip"]]["title"]) if f.get("to_ip") in by_ip else ""} ({e(f.get("to_ip") or "?")}:{e(f.get("to_port") or "")})</td>'
+        f'<td>{e(f.get("description") or "")}</td></tr>' for f in fw)
+    return (head + f'<div class="forwards"><h3>⚠ Открыто из интернета внутрь сети: {len(fw)}</h3>'
+            '<p class="meta">Каждый такой проброс — дверь снаружи. Оставь только осознанные (например, VPN).</p>'
+            f'<table><tr><th>Вид</th><th>Порт снаружи</th><th>Куда ведёт</th><th>Описание</th></tr>{rows}</table></div>')
+
+
 def render(model: dict) -> str:
     meta = model["meta"]
     iface = meta.get("interface", {})
@@ -125,8 +155,10 @@ def render(model: dict) -> str:
         warnings.append("Нет базы производителей IEEE (data/oui.txt): производитель по MAC не определяется. "
                         "Команда: python -m lanmap oui update")
     if model.get("registry_drafts"):
-        warnings.append(f"В реестре {model['registry_drafts']} черновиков (например, из среза Codex). "
-                        "Проверь и подпиши: python -m lanmap sign <MAC> --name \"…\" или поставь confirmed: true в data/registry.json.")
+        warnings.append(f"В реестре {model['registry_drafts']} черновиков из среза Codex — это предложения, а не факты. "
+                        "Подписывать не обязательно сейчас: позже это можно будет сделать кнопкой в интерфейсе.")
+
+    forwards_html = _forwards(model, devs)
 
     sections = []
     for g in groups:
@@ -157,6 +189,7 @@ def render(model: dict) -> str:
   </div>
   <p class="meta">Уверенность у отвечавших: {e(summary)}</p>
   {''.join(f'<p class="warning">{e(w)}</p>' for w in warnings)}
+  {forwards_html}
   <div class="filters">
     <input id="q" type="search" placeholder="Поиск: IP, MAC, имя, порт, производитель…" autocomplete="off">
     <button class="chip active" data-filter-group="">Все</button>{chips}
@@ -206,6 +239,9 @@ details summary{cursor:pointer;color:var(--accent)}details h4{margin:8px 0 4px;f
 details ul{margin:0;padding-left:18px}details li{margin:2px 0}.src{color:var(--muted);font-size:12px}
 .tag{font-size:11px;background:var(--chip);border-radius:4px;padding:0 5px}
 .problems{list-style:none;padding:0!important;margin:6px 0!important}.conflict{color:var(--c1)}.note{color:var(--muted)}
+.forwards{background:var(--warnbg);border-radius:8px;padding:8px 12px;margin:8px 0;overflow-x:auto}
+.forwards h3{margin:0 0 4px;font-size:15px}.forwards table{border-collapse:collapse;font-size:13px}
+.forwards td,.forwards th{text-align:left;padding:3px 10px 3px 0;vertical-align:top}
 footer{color:var(--muted);text-align:center;padding:20px;font-size:12px}
 .hidden{display:none!important}
 @media (max-width:480px){.top,main{padding-left:12px;padding-right:12px}.grid{grid-template-columns:1fr}}

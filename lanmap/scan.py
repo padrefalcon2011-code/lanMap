@@ -126,6 +126,14 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
                                     "open": open_ports})
     write_json(raw / "probes.json", probes)
 
+    if ctx.gateway:
+        from lanmap import routers
+        progress.step("Роутер: список клиентов и пробросов (только чтение)")
+        router = routers.collect(ctx.gateway)
+        write_json(raw / "router.json", router)
+        if router.get("skipped") or router.get("errors", {}).get("login"):
+            progress.step("Данные роутера недоступны: " + (router.get("skipped") or router["errors"]["login"]))
+
     progress.step("Имена (DNS, роутер, NetBIOS), UPnP-описания, ONVIF, SMB")
     ips = sorted(candidates)
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:

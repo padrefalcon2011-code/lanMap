@@ -4,18 +4,20 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 
-from lanmap import actions, devices, identify, oui, registry
+from lanmap import actions, devices, identify, oui, registry, routers
 from lanmap.report import render
 from lanmap.util import now_iso, read_json, write_json
 
+OFFLINE = "Сейчас не в сети (известны роутеру)"
 GROUP_ORDER = ["Сеть", "Компьютеры", "Хранилища", "Камеры", "ТВ и приставки", "Колонки", "Печать",
-               "Умный дом", "Телефоны и планшеты", "Не опознаны"]
+               "Умный дом", "Телефоны и планшеты", "Не опознаны", OFFLINE]
 
 
 def _sort_key(dev: dict):
     group = dev["identity"]["group"]
     order = GROUP_ORDER.index(group) if group in GROUP_ORDER else len(GROUP_ORDER)
-    return order, ipaddress.ip_address(dev["ips"][0])
+    first = ipaddress.ip_address(dev["ips"][0]) if dev["ips"] else ipaddress.ip_address("255.255.255.255")
+    return order, first, dev["title"].lower()
 
 
 def display(dev: dict) -> tuple[str, str]:
@@ -25,8 +27,11 @@ def display(dev: dict) -> tuple[str, str]:
     if ident["model"] and ident["vendor"] and ident["vendor"].lower().split(" ")[0] in ident["model"].lower():
         what = ident["model"]
     kind = f"{ident['type_label']} {what}".strip()
-    if reg.get("name"):
+    if reg.get("name") and (reg.get("confirmed") or not (dev.get("router") or {}).get("label")):
         return reg["name"], kind
+    label = (dev.get("router") or {}).get("label")
+    if label:
+        return label, kind
     found_name = ident.get("name")
     return kind, found_name or ""
 
@@ -43,6 +48,8 @@ def build(snapshot: Path) -> dict:
         dev["identity"] = identify.resolve(dev, entry)
         dev["actions"] = actions.build(dev)
         dev["title"], dev["subtitle"] = display(dev)
+        if not dev["alive"] and dev.get("router"):
+            dev["identity"]["group"] = OFFLINE
     devs.sort(key=_sort_key)
     model = {
         "built": now_iso(),
@@ -50,6 +57,8 @@ def build(snapshot: Path) -> dict:
         "meta": meta,
         "oui_available": oui.available(),
         "registry_drafts": sum(1 for e in reg["devices"].values() if not e.get("confirmed")),
+        "router": routers.normalize(read_json(snapshot / "raw" / "router.json")),
+        "router_skipped": (read_json(snapshot / "raw" / "router.json") or {}).get("skipped"),
         "devices": devs,
     }
     write_json(snapshot / "devices.json", model)

@@ -146,6 +146,59 @@ def cmd_confirm(args) -> int:
     return 0
 
 
+def _gateway() -> str:
+    net = _pick_network(None, True)
+    if not net.gateway:
+        raise SystemExit("Не найден шлюз (роутер) в выбранной сети")
+    return net.gateway
+
+
+def cmd_router(args) -> int:
+    import getpass
+    from lanmap import credentials
+    from lanmap.routers import keenetic
+    host = args.host or _gateway()
+    target = keenetic.credential_target(host)
+    if args.action == "forget":
+        print("Удалено." if credentials.delete(target) else "Сохранённого входа не было.")
+        return 0
+    product = keenetic.is_keenetic(host)
+    if not product:
+        raise SystemExit(f"По адресу {host} не отвечает Keenetic. Другие роутеры пока не поддерживаются.")
+    if args.action == "login":
+        print(f"Роутер {product} ({host}). Лучше отдельный пользователь с правами «Веб-конфигуратор» "
+              "и «Запретить сохранять настройки системы».")
+        user = input("Логин: ").strip()
+        password = getpass.getpass("Пароль (не отображается): ")
+        client = keenetic.KeeneticClient(host)
+        try:
+            client.login(user, password)
+        except keenetic.KeeneticError as exc:
+            raise SystemExit(f"Не получилось войти: {exc}")
+        credentials.save(target, user, password, comment=f"LanMap: роутер {product} {host}")
+        print("Вход проверен, пароль сохранён в диспетчере учётных данных Windows "
+              f"(запись LanMap:{target}). Проверь доступ: python -m lanmap router test")
+        return 0
+    # test: какие чтения доступны, без вывода личных данных
+    result = keenetic.collect(host)
+    if "login" in result["errors"]:
+        raise SystemExit(f"Вход: {result['errors']['login']}")
+    print(f"Роутер {product} ({host}), вход выполнен. Что доступно для чтения:")
+    for name, path in keenetic.READS.items():
+        if name in result["errors"]:
+            print(f"  ✗ {name:15} {path:25} {result['errors'][name]}")
+            continue
+        value = result["data"][name]
+        if isinstance(value, dict):
+            size = f"ключей: {len(value)} ({', '.join(list(value)[:6])}{'…' if len(value) > 6 else ''})"
+        elif isinstance(value, list):
+            size = f"записей: {len(value)}"
+        else:
+            size = repr(value)[:60]
+        print(f"  ✓ {name:15} {path:25} {size}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _utf8_console()
     parser = argparse.ArgumentParser(prog="lanmap", description="Срез и опознание устройств локальной сети. Только чтение.")
@@ -185,6 +238,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("confirm", help="подтвердить черновики реестра как есть")
     p.add_argument("targets", nargs="+", help="MAC или IP")
     p.set_defaults(func=cmd_confirm)
+
+    p = sub.add_parser("router", help="вход в роутер (только чтение) и проверка доступа")
+    p.add_argument("action", choices=["login", "test", "forget"])
+    p.add_argument("--host", help="адрес роутера (по умолчанию шлюз)")
+    p.set_defaults(func=cmd_router)
 
     args = parser.parse_args(argv)
     if os.name != "nt":
