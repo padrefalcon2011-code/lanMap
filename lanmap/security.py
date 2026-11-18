@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -209,7 +210,9 @@ CHECKS: list[Check] = [
         criteria=["E2"], who="internet", stake=["files", "device"],
         risk="Через UPnP устройство попросило роутер пробросить к нему порты, и тебя никто не спросил. Теперь его "
              "страницу входа и службы видно из интернета. Боты круглосуточно перебирают все адреса в мире и ищут как раз "
-             "такие двери: подбирают пароли и пробуют известные дыры. У NAS итог обычно один: файлы шифруют и просят выкуп.",
+             "такие двери: подбирают пароли и пробуют известные дыры. У NAS итог обычно один: файлы шифруют и просят выкуп. "
+             "Подтверждено правило в роутере; дойдёт ли до него запрос снаружи (у провайдера может быть свой NAT), "
+             "LanMap не проверял.",
         steps=[
             "Вспомни, зачем нужен доступ снаружи: фото с телефона вне дома, синхронизация, просмотр камер.",
             "Если доступ нужен, сначала настрой замену: VPN до дома (у многих роутеров он встроен) или облачный "
@@ -384,6 +387,19 @@ def set_status(check_id: str, key: str, status: str, reason: str | None = None) 
     return entry
 
 
+def _after(a: str | None, b: str | None) -> bool:
+    """Момент a позже b (ISO-строки, с часовым поясом или без)."""
+    if not a or not b:
+        return False
+    try:
+        da, db = datetime.fromisoformat(a), datetime.fromisoformat(b)
+        if (da.tzinfo is None) != (db.tzinfo is None):
+            da, db = da.replace(tzinfo=None), db.replace(tzinfo=None)
+        return da > db
+    except ValueError:
+        return a > b
+
+
 def _effective(saved: dict | None, started: str) -> dict:
     """Статус находки с учётом отметки владельца. Исправленная, но снова видимая находка — регресс."""
     if not saved:
@@ -392,7 +408,7 @@ def _effective(saved: dict | None, started: str) -> dict:
     out = {"status": status, "updated": saved.get("updated"), "reason": saved.get("reason")}
     if status == "fixed":
         # Срез сделан после отметки «исправлено», а находка на месте — вернулась
-        if started and saved.get("updated") and started > saved["updated"]:
+        if _after(started, saved.get("updated")):
             out["status"] = "regress"
         else:
             out["status"] = "fixed_pending"  # отмечено, ждёт перепроверки новым срезом
