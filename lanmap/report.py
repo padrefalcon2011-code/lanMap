@@ -10,6 +10,7 @@ import html
 import ipaddress
 from collections import Counter
 
+from lanmap import security as sec_mod
 from lanmap.devices import connection_text
 from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
 from lanmap.report_assets import CSS, ICONS, JS
@@ -105,6 +106,8 @@ def change_chip(item: dict) -> str:
         return f'<span class="pc" {attrs}>{icon("pencil", "s")}{e(item.get("new") or "")}</span>'
     if what == "firmware":
         return f'<span class="pc" {attrs}>{icon("chip", "s")}прошивка</span>'
+    if what == "finding":
+        return f'<span class="pc p{e(item.get("priority", 2))}" {attrs}>{icon("shield", "s")}находка</span>'
     if what == "serial":
         return f'<span class="pc warn" {attrs}>{icon("barcode", "s")}≠ серийник</span>'
     return f'<span class="pc" {attrs}>{e(item.get("short") or what)}</span>'
@@ -162,7 +165,7 @@ def _flags(dev: dict) -> str:
     return "".join(out)
 
 
-def _detail(dev: dict) -> str:
+def _detail(dev: dict, found: list[dict] | None = None) -> str:
     ident, reg, r = dev["identity"], dev.get("registry") or {}, dev.get("router") or {}
     facts = [("IP", ", ".join(dev["ips"]) or "—"), ("MAC", dev["mac"] or "не получен")]
     facts += [(FIELD_NAMES[k], ident[k]) for k in ("vendor", "model", "firmware", "os") if ident.get(k)]
@@ -203,15 +206,32 @@ def _detail(dev: dict) -> str:
            f'{"<h4>Внимание</h4><ul>" + problems + "</ul>" if problems else ""}'
            f'<h4>Улики</h4><ul>{evidence or "<li>улик нет</li>"}</ul>'
            f'<p class="src">Правила: {e(", ".join(ident["rules"]) or "нет")}</p></details>')
+    slines = "".join(
+        f'<div class="sline"><span class="pc p{f["priority"]}">{icon("shield", "s")}П{f["priority"]}</span>'
+        f'<a href="#sec-{e(f["id"])}">{e(sec_mod.BY_ID[f["id"]].title)}</a>{_status_chip(f)}</div>'
+        for f in found or [])
     return (f'<div class="tdetail" hidden><div class="dgrid"><div class="facts">{facts_html}</div>'
-            f'<div class="ports">{ports}</div></div><div class="acts">{"".join(acts)}</div>{why}</div>')
+            f'<div class="ports">{ports}</div></div>{slines}<div class="acts">{"".join(acts)}</div>{why}</div>')
 
 
-def _tile(dev: dict, changes: dict | None) -> str:
+def _sec_chip(found: list[dict]) -> str:
+    """Один значок на плитке: самый высокий приоритет среди открытых находок устройства и их число."""
+    live = [f for f in found if f["status"] not in sec_mod.QUIET_STATUSES]
+    if not live:
+        return ""
+    top = min(f["priority"] for f in live)
+    names = "; ".join(sec_mod.BY_ID[f["id"]].title for f in live)
+    more = f"·{len(live)}" if len(live) > 1 else ""
+    return f'<span class="pc p{top}" title="{e("Находки: " + names)}">{icon("shield", "s")}П{top}{more}</span>'
+
+
+def _tile(dev: dict, changes: dict | None, found: list[dict] | None = None) -> str:
     ident = dev["identity"]
     conf = ident["confidence"]
+    found = found or []
     items = ((changes or {}).get("by_key") or {}).get(dev["key"]) or []
-    risky = any(s["port"] in RISKY_PORTS for s in dev["services"])
+    risky = any(s["port"] in RISKY_PORTS for s in dev["services"]) or any(
+        f["priority"] <= 2 and f["status"] not in sec_mod.QUIET_STATUSES for f in found)
     status = "on" if dev["alive"] else "off"
     dot_label = "в сети" if dev["alive"] else "не отвечало"
 
@@ -221,7 +241,7 @@ def _tile(dev: dict, changes: dict | None) -> str:
     if len(ports) > MAX_TILE_PORTS:
         port_chips += f'<span class="pc" title="ещё портов">+{len(ports) - MAX_TILE_PORTS}</span>'
     chg = "".join(change_chip(x) for x in items)
-    marks = (f'{chg}{port_chips}{_flags(dev)}')
+    marks = (f'{_sec_chip(found)}{chg}{port_chips}{_flags(dev)}')
 
     search = " ".join([dev["title"], dev["subtitle"], " ".join(dev["ips"]), dev["mac"] or "", ident["type_label"],
                        ident.get("vendor") or "", ident.get("model") or "",
@@ -239,7 +259,7 @@ def _tile(dev: dict, changes: dict | None) -> str:
             f'<span class="ip mono">{e(ip)}</span></span>'
             f'<span class="tside">{_meter(conf)}{_connection(dev.get("router") or {})}</span>'
             f'<span class="tmarks">{marks}</span></button>'
-            f'{_detail(dev)}</article>')
+            f'{_detail(dev, found)}</article>')
 
 
 # --- панели ----------------------------------------------------------------------------------
@@ -287,6 +307,8 @@ def _changes(model: dict) -> str:
                 + cnt(len(c["online"]), "", "arrow", "Снова в сети"))
     if c["forwards_added"]:
         counters += cnt(len(c["forwards_added"]), "crit", "globe", "Новые пробросы из интернета")
+    if c.get("findings_added"):
+        counters += cnt(len(c["findings_added"]), "crit", "shield", "Новые находки безопасности")
     head = (f'<summary><h2>{icon("delta")}Изменения</h2><span class="muted">с {e(when)}</span>'
             f'<span class="counters">{counters}</span>{icon("chevron", "chev")}</summary>')
     notes = "".join(f'<div class="note">{icon("info", "s")}<span>{e(n)}</span></div>' for n in c.get("notes") or [])
@@ -306,6 +328,13 @@ def _changes(model: dict) -> str:
 
     group("Новые пробросы из интернета",
           [_fw_row(f, by_ip, present, f'<span class="pc crit">{icon("plus", "s")}</span>') for f in c["forwards_added"]])
+    def frow(f: dict, gone: bool = False) -> str:
+        chip = (f'<span class="pc del">{icon("check", "s")}нет</span>' if gone else
+                f'<span class="pc p{f["priority"]}">{icon("shield", "s")}П{f["priority"]}</span>')
+        return row(f, f'{chip}<span>{e(sec_mod.BY_ID[f["id"]].title)}</span>')
+
+    group("Новые находки безопасности", [frow(f) for f in c.get("findings_added") or []])
+    group("Находок больше нет", [frow(f, True) for f in c.get("findings_removed") or []])
     group("Новые устройства", [row(d, change_chip({"what": "new", "text": "в прошлом срезе этого устройства не было"}))
                                for d in c["new"]])
     group("Изменились", [row(d, "".join(change_chip(x) for x in d["items"])) for d in c["changed"]])
@@ -322,6 +351,106 @@ def _changes(model: dict) -> str:
         parts.append(f'<div class="note">{icon("shuffle", "s")}<span>Случайный MAC: '
                      f'+{p.get("new", 0)} / −{p.get("gone", 0)}. Телефоны меняют такой MAC, поштучно не сравниваются.</span></div>')
     return (f'<details class="panel" id="changes" open>{head}<div class="panel-body">{notes}{"".join(parts)}</div></details>')
+
+
+# --- безопасность ----------------------------------------------------------------------------
+
+WHO_ICONS = {"internet": "globe", "lan": "home"}
+STAKE_ICONS = {"files": "folder", "video": "eye", "network": "router", "device": "chip", "passwords": "key"}
+CONF_ICONS = {"confirmed": "check", "likely": "question", "verify": "search"}
+STATUS_CHIPS = {
+    "in_progress": ("wrench", "в работе", ""),
+    "fixed_pending": ("check", "отмечена исправленной, ждёт нового среза", "good"),
+    "regress": ("alert", "исправляли, но вернулась", "crit"),
+    "accepted": ("check", "принята осознанно", ""),
+    "na": ("minus", "не применимо", ""),
+}
+
+
+def _status_chip(f: dict) -> str:
+    if f["status"] not in STATUS_CHIPS:
+        return ""
+    ico, text, cls = STATUS_CHIPS[f["status"]]
+    reason = f' — {f["reason"]}' if f.get("reason") else ""
+    return f'<span class="st {cls}" title="{e(text + reason)}">{icon(ico, "s")}{e(text)}</span>'
+
+
+def _finding_card(check, items: list[dict], present: set[str], router_kind: str | None) -> str:
+    live = [f for f in items if f["status"] not in sec_mod.QUIET_STATUSES]
+    prio = min(f["priority"] for f in (live or items))
+    who = (f'<span class="facet {"net" if check.who == "internet" else ""}" '
+           f'{tip("Кто может воспользоваться: " + sec_mod.WHO_NAMES[check.who])}>{icon(WHO_ICONS[check.who])}</span>')
+    stakes = "".join(f'<span class="facet" {tip("Под угрозой: " + sec_mod.STAKE_NAMES[x])}>'
+                     f'{icon(STAKE_ICONS[x])}</span>' for x in check.stake)
+    crit = "".join(f'<span class="pc" title="{e(c + ": " + sec_mod.CRITERIA[c])}">{e(c)}</span>' for c in check.criteria)
+
+    rows = []
+    for f in items:
+        conf = (f'<span class="conf {f["confidence"]}" title="Степень подтверждения">'
+                f'{e(sec_mod.CONFIDENCE_NAMES[f["confidence"]])}</span>')
+        ip = f'<span class="ip mono">{e(", ".join(f["ips"]))}</span>' if f.get("ips") else ""
+        rows.append(f'<div class="crow">{_who(f, present)}{ip}<span class="det">{e(f["detail"])}</span>{conf}'
+                    f'{_status_chip(f)}</div>')
+
+    hints = sec_mod.vendor_hints(check, items, router_kind if check.id == "UPNP_PORT_MAPPINGS" else None)
+    steps = "".join(f"<li>{e(x)}</li>" for x in check.steps)
+    hint_html = "".join(f'<div class="note">{icon("info", "s")}<span>{e(h)}</span></div>' for h in hints)
+    target = items[0]["ips"][0] if len(items) == 1 and items[0].get("ips") else "all"
+    cmd = f'python -m lanmap finding set {check.id} {target} accepted --reason "…"'
+    howto = (f'<details class="howto"><summary>{icon("wrench", "s")}Что делать</summary><ol>{steps}</ol>{hint_html}'
+             f'<div class="hgrid"><div class="hbox"><b>{icon("alert", "s")}Что может сломаться</b>{e(check.breaks)}</div>'
+             f'<div class="hbox"><b>{icon("undo", "s")}Как вернуть</b>{e(check.rollback)}</div>'
+             f'<div class="hbox"><b>{icon("check", "s")}Как убедиться</b>{e(check.verify)}</div></div>'
+             f'<div class="cli">Отметить (in_progress, fixed, accepted — оставляю осознанно): <code>{e(cmd)}</code>'
+             f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
+             f'<span class="lbl">копировать</span></button></div></details>')
+    return (f'<article class="scard p{prio}{" quiet" if not live else ""}" id="sec-{e(check.id)}">'
+            f'<span class="fico">{icon(check.icon)}</span>'
+            f'<div class="fhead"><h3>{e(check.title)}</h3><span class="prio">{icon("alert", "s")}'
+            f'{e(sec_mod.PRIORITY_NAMES[prio])}</span><span class="facets">{who}<i class="sep"></i>{stakes}</span>{crit}</div>'
+            f'<p class="frisk">{e(check.risk)}</p><div class="fobjs">{"".join(rows)}</div>{howto}</article>')
+
+
+def _security(model: dict) -> str:
+    """Панель «Безопасность»: карточка на проверку, внутри — устройства, риск и свёрнутая инструкция."""
+    sec = model.get("security")
+    if not sec:
+        return ""
+    present = {d["key"] for d in model["devices"]}
+    by_check: dict[str, list[dict]] = {}
+    for f in sec["findings"]:
+        by_check.setdefault(f["id"], []).append(f)
+    live = sec_mod.open_findings(sec)
+
+    def cnt(p: int) -> str:
+        n = sum(1 for f in live if f["priority"] == p)
+        label = sec_mod.PRIORITY_NAMES[p]
+        return (f'<span class="cnt p{p}{" zero" if not n else ""}" title="{e(label)}" aria-label="{e(label)}: {n}">'
+                f'{icon("shield", "s")}П{p} · {n}</span>')
+
+    regress = sum(1 for f in sec["findings"] if f["status"] == "regress")
+    counters = cnt(1) + cnt(2) + cnt(3)
+    if regress:
+        counters += f'<span class="cnt crit" title="Исправленное вернулось">{icon("alert", "s")}вернулось · {regress}</span>'
+    top = min((f["priority"] for f in live), default=0)
+    head = (f'<summary><h2>{icon("shield")}Безопасность</h2><span class="counters">{counters}</span>'
+            f'{icon("chevron", "chev")}</summary>')
+
+    def order(cid: str) -> tuple:
+        items = by_check[cid]
+        quiet = all(f["status"] in sec_mod.QUIET_STATUSES for f in items)
+        return quiet, min(f["priority"] for f in items), list(sec_mod.BY_ID).index(cid)
+
+    router_kind = (model.get("router") or {}).get("kind")
+    cards = "".join(_finding_card(sec_mod.BY_ID[cid], by_check[cid], present, router_kind)
+                    for cid in sorted(by_check, key=order))
+    if not live:
+        cards = f'<div class="ok-big">{icon("check", "l")}Открытых находок нет.</div>' + cards
+    skipped = "".join(
+        f'<div class="note">{icon("info", "s")}<span>Не проверялось: {e(sec_mod.BY_ID[cid].title.lower())} — {e(why)}</span></div>'
+        for cid, why in (sec.get("skipped") or {}).items())
+    return (f'<details class="panel{" crit" if top == 1 else ""}" id="security" open>{head}'
+            f'<div class="panel-body">{cards}{skipped}</div></details>')
 
 
 def _forwards(model: dict) -> str:
@@ -388,6 +517,12 @@ def _kpis(model: dict) -> str:
     if c and not c.get("error"):
         tiles.append(f'<button class="kpi add" data-kpi="changes"><span class="ico">{icon("delta")}</span>'
                      f'<span><b>{c.get("total", 0)}</b><span class="l">изменений</span></span></button>')
+    sec = model.get("security")
+    if sec:
+        live = sec_mod.open_findings(sec)
+        top = min((f["priority"] for f in live), default=0)
+        tiles.append(f'<button class="kpi {"crit" if top == 1 else ""}" data-kpi="security"><span class="ico">'
+                     f'{icon("shield")}</span><span><b>{len(live)}</b><span class="l">находок безопасности</span></span></button>')
     fw = ((model.get("router") or {}).get("forwards") or [])
     if model.get("router"):
         tiles.append(f'<button class="kpi {"crit" if fw else ""}" data-kpi="doors"><span class="ico">{icon("globe")}</span>'
@@ -403,6 +538,9 @@ def _legend() -> str:
         ('<span class="pc add">+80</span>', "порт открылся с прошлого среза"),
         (f'<span class="pc del">{icon("minus", "s")}<s>80</s></span>', "порт закрылся"),
         (f'<span class="pc crit">{icon("alert", "s")}23</span>', "опасный порт (Telnet, ADB)"),
+        (f'<span class="pc p1">{icon("shield", "s")}П1</span><span class="pc p2">П2</span><span class="pc p3">П3</span>',
+         "находка безопасности: срочно / важно / желательно"),
+        (icon("globe", "s") + icon("home", "s"), "кто может воспользоваться: из интернета / изнутри сети"),
         (f'<span class="pc trans">IP <s>·10</s>{icon("arrow", "s")}<span class="to">·20</span></span>', "сменился адрес"),
         (f'<span class="pc warn">{icon("barcode", "s")}≠</span>', "по адресу отвечает другой серийник"),
         (icon("check", "s"), "подписано владельцем"), (icon("user", "s"), "этот компьютер"),
@@ -423,6 +561,9 @@ def render(model: dict) -> str:
         if d["identity"]["group"] not in groups:
             groups.append(d["identity"]["group"])
     count = Counter(d["identity"]["group"] for d in devs)
+    found_by_key: dict[str, list[dict]] = {}
+    for f in (model.get("security") or {}).get("findings") or []:
+        found_by_key.setdefault(f["key"], []).append(f)
 
     gfilters = "".join(
         f'<button class="gf" {gstyle(g)} data-group="{e(g)}" data-tip="{e(GROUP_SHORT.get(g, g))} · {count[g]}" '
@@ -430,7 +571,7 @@ def render(model: dict) -> str:
         f'<span class="badge">{count[g]}</span></button>' for g in groups)
     sections = []
     for g in groups:
-        tiles = "".join(_tile(d, changes) for d in devs if d["identity"]["group"] == g)
+        tiles = "".join(_tile(d, changes, found_by_key.get(d["key"])) for d in devs if d["identity"]["group"] == g)
         is_open = "" if g == OFFLINE_GROUP else " open"
         sections.append(f'<details class="group" {gstyle(g)}{is_open}><summary>{icon("chevron", "s chev")}'
                         f'<span class="gico">{icon(GROUP_ICONS.get(g, "unknown"))}</span>{e(g)} '
@@ -457,6 +598,7 @@ def render(model: dict) -> str:
   {_pills(model)}
   {_kpis(model)}
 </header>
+{_security(model)}
 {_forwards(model)}
 {_changes(model)}
 <nav class="gfilters" aria-label="Группы устройств">{gfilters}</nav>

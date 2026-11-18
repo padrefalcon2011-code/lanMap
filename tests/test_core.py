@@ -322,8 +322,12 @@ class ChangesTest(unittest.TestCase):
         full = model([cam, off], router={"forwards": [fw], "firmware": "1", "clients": [], "model": "R"})
         full["changes"] = self.cmp(base, full)
         full["meta"].update(admin=True, interface={"network": NET})
+        from lanmap import security
+        snap = Path(tempfile.mkdtemp(dir=TMP.name))
+        full["security"] = security.evaluate(full, snap, self.TESTED, {})
         page = render(full)
-        for text in ("Открыто из интернета", "Изменения", "+23", "d-" + MAC_B, "wifi1"):
+        for text in ("Открыто из интернета", "Изменения", "+23", "d-" + MAC_B, "wifi1", "Безопасность",
+                     "sec-TELNET_OPEN", "sec-UPNP_PORT_MAPPINGS", "находок безопасности", "Что может сломаться"):
             self.assertIn(text, page)
         bare = model([rdev(MAC_B, "192.0.2.10", "camera")])
         self.assertIn("Сеть", render(bare))
