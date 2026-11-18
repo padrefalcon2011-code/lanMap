@@ -4,23 +4,13 @@
 Числа в путях SVG — всегда через пробел и с ведущим нулём (тест-сторож ищет IP-адреса в пакете).
 """
 
-# Иконки 24×24, линия currentColor. Тип устройства → символ i-<тип>.
+from lanmap.report_icons import DEVICE_ICONS
+
+# Служебные иконки 24×24, линия currentColor. Иконки типов устройств (i-<тип>, 32×32, двухтоновые) —
+# в report_icons.py, подставляются в тот же набор.
 ICONS = r"""<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
 <defs>
-<symbol id="i-router" viewBox="0 0 24 24"><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h0.01M10.5 16.5h0.01M8 13 6 5M16 13 18 5"/></symbol>
-<symbol id="i-network" viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="8" rx="2"/><path d="M6 12h1M9 12h1M12 12h1M15 12h1M18 12h0.01"/></symbol>
-<symbol id="i-camera" viewBox="0 0 24 24"><path d="M2 8 15 5 17 11 4 14z"/><path d="M16.5 8.2 21 7v5l-3.5 0.8"/><path d="M8 13.1 9 18H4M4 15.5v5"/></symbol>
-<symbol id="i-nas" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M5 9h14M5 15h14M8.5 6h0.01M8.5 12h0.01M8.5 18h0.01"/></symbol>
-<symbol id="i-tv" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="13" rx="2"/><path d="M8 3l4 4 4-4"/></symbol>
-<symbol id="i-media" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M10 9.5v5l4.5-2.5z"/></symbol>
-<symbol id="i-speaker" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="6" ry="2.5"/><path d="M6 6v12c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6M9.5 13h5"/></symbol>
-<symbol id="i-printer" viewBox="0 0 24 24"><path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 14h10v7H7z"/></symbol>
-<symbol id="i-computer" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19.5h20"/></symbol>
-<symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></symbol>
-<symbol id="i-wearable" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="3"/><path d="M9 7V3h6v4M9 17v4h6v-4"/></symbol>
-<symbol id="i-iot" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><circle cx="12" cy="14.5" r="2.5"/></symbol>
-<symbol id="i-unknown" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-0.6 0.3-0.9 0.9-0.9 1.5V14M12 17.5h0.01"/></symbol>
-<symbol id="i-offline" viewBox="0 0 24 24"><path d="M20 15A8 8 0 1 1 9 4a6 6 0 0 0 11 11z"/></symbol>
+{DEVICE_ICONS}
 <symbol id="i-devices" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M12 11.5 6.5 17M12 11.5 17.5 17"/></symbol>
 <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></symbol>
 <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16M14 6l6 6-6 6"/></symbol>
@@ -50,7 +40,7 @@ ICONS = r"""<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
 <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15A8 8 0 1 1 9 4a6 6 0 0 0 11 11z"/></symbol>
 <symbol id="i-expand" viewBox="0 0 24 24"><path d="M7 9l5-5 5 5M7 15l5 5 5-5"/></symbol>
 <symbol id="i-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-0.6 0.3-0.9 0.9-0.9 1.5V14M12 17.5h0.01"/></symbol>
-</defs></svg>"""
+</defs></svg>""".replace("{DEVICE_ICONS}", DEVICE_ICONS)
 
 CSS = r"""
 :root{color-scheme:light;--bg:#f3f4f6;--card:#fff;--fg:#1b1f27;--muted:#69707d;--faint:#9aa1ad;--line:#e2e5ea;
@@ -64,8 +54,9 @@ CSS = r"""
 --crit:#e66767;--crit-soft:#3a1f1f;--add:#6da7ec;--add-soft:#1d2b3d;--shadow:none}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,"Segoe UI",sans-serif}
-svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
-svg.i.s{width:14px;height:14px}svg.i.l{width:26px;height:26px}
+svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.i.s{width:18px;height:18px}svg.i.l{width:30px;height:30px}
+svg.i .d{fill:currentColor;opacity:.2;stroke:none}
 button{font:inherit;color:inherit}
 .wrap{max-width:1400px;margin:auto;padding:16px 20px}
 .mono{font-family:ui-monospace,Consolas,monospace}
@@ -92,13 +83,15 @@ border-radius:10px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.15);font-
 .kpi{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;
 box-shadow:var(--shadow);text-align:left;cursor:default}
 button.kpi{cursor:pointer}button.kpi:hover{border-color:var(--accent)}
-.kpi .ico{width:38px;height:38px;border-radius:10px;background:var(--chip);display:grid;place-items:center;flex:none}
+.kpi .ico{width:46px;height:46px;border-radius:12px;background:var(--chip);display:grid;place-items:center;flex:none}
+.kpi .ico svg.i{width:28px;height:28px}
+.ring{width:46px!important;height:46px!important}
 .kpi b{display:block;font-size:22px;line-height:1.1}.kpi span.l{color:var(--muted);font-size:12px}
 .kpi.crit{border-color:var(--crit)}.kpi.crit .ico{background:var(--crit-soft);color:var(--crit)}
 .kpi.add .ico{background:var(--add-soft);color:var(--add)}
 .ring{width:38px;height:38px;flex:none}.ring circle{fill:none;stroke-width:4}
 .ring .bg{stroke:var(--chip)}.ring .fg{stroke:var(--accent);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%}
-.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--good);flex:none}
+.dot{display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--good);flex:none}
 .dot.off{background:transparent;border:2px solid var(--faint)}
 /* панели */
 details.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;box-shadow:var(--shadow)}
@@ -120,7 +113,7 @@ details.panel.crit{border-color:var(--crit)}details.panel.crit>summary h2{color:
 .crow .who{display:inline-flex;align-items:center;gap:6px;min-width:0;border:0;background:none;padding:0;cursor:pointer;font-weight:600}
 .crow .who:hover{color:var(--accent)}.crow.gone .who{text-decoration:line-through;color:var(--muted);cursor:default}
 .crow .ip{color:var(--muted);font-size:12px}
-.pc{display:inline-flex;align-items:center;gap:3px;font-size:12px;padding:1px 7px;border-radius:6px;background:var(--chip);
+.pc{display:inline-flex;align-items:center;gap:3px;font-size:13px;padding:2px 8px;border-radius:7px;background:var(--chip);
 font-family:ui-monospace,Consolas,monospace;white-space:nowrap}
 .pc.add{background:var(--add-soft);color:var(--add);font-weight:600}
 .pc.del{color:var(--muted)}.pc.del s{text-decoration-thickness:2px}
@@ -142,15 +135,29 @@ border-bottom:1px solid var(--line)}
 .search{flex:1 1 220px;display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:8px;
 padding:0 10px;height:32px;color:var(--muted)}
 .search input{border:0;outline:0;background:transparent;color:var(--fg);flex:1;font:inherit;min-width:0}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--card)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;background:var(--card)}
 .seg button{border:0;background:transparent;height:30px;padding:0 9px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:var(--muted)}
+.seg button:first-child{border-radius:7px 0 0 7px}.seg button:last-child{border-radius:0 7px 7px 0}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button.on{background:var(--accent);color:#fff}
-.gfilters{display:flex;gap:4px;flex-wrap:wrap;width:100%}
-.gf{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--card);border-radius:999px;
-height:30px;padding:0 10px 0 8px;cursor:pointer;color:var(--fg)}
-.gf small{color:var(--muted);font-weight:600}
-.gf.on{background:var(--accent);border-color:var(--accent);color:#fff}.gf.on small{color:#fff}
+/* фильтр групп: крупные значки, счётчик в уголке, подпись — в подсказке */
+.gfilters{display:flex;gap:10px;flex-wrap:wrap;width:100%;padding-top:6px}
+.gf{position:relative;width:54px;height:54px;border-radius:15px;border:1px solid var(--line);background:var(--card);
+display:grid;place-items:center;cursor:pointer;color:var(--fg);padding:0;box-shadow:var(--shadow);transition:transform .12s,border-color .12s}
+.gf svg.i{width:32px;height:32px}
+.gf:hover{border-color:var(--accent);color:var(--accent);transform:translateY(-1px)}
+.gf .badge{position:absolute;top:-7px;right:-7px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--fg);
+color:var(--bg);font-size:11px;font-weight:700;line-height:20px;text-align:center;box-shadow:0 0 0 2px var(--bg)}
+.gf.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.gf.on .badge{background:#fff;color:var(--accent)}
+/* плавающая подсказка: наведение и фокус с клавиатуры */
+[data-tip]{position:relative}
+[data-tip]::after{content:attr(data-tip);position:absolute;left:50%;top:calc(100% + 8px);transform:translate(-50%,-3px);
+background:var(--fg);color:var(--bg);font:500 12px/1.3 system-ui,"Segoe UI",sans-serif;white-space:nowrap;padding:5px 9px;
+border-radius:7px;pointer-events:none;opacity:0;transition:opacity .12s,transform .12s;z-index:40;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+[data-tip]:hover::after,[data-tip]:focus-visible::after{opacity:1;transform:translate(-50%,0)}
+.tip-l[data-tip]::after{left:auto;right:0;transform:translate(0,-3px)}
+.tip-l[data-tip]:hover::after,.tip-l[data-tip]:focus-visible::after{transform:translate(0,0)}
 /* группы и плитки */
 details.group{margin:14px 0}
 details.group>summary{list-style:none;display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;font-size:15px;font-weight:600}
@@ -164,7 +171,9 @@ details.group:not([open])>summary .chev{transform:rotate(-90deg)}
 .tile.open{grid-column:1/-1}
 .thead{display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"icon main side" "marks marks marks";gap:6px 10px;
 width:100%;text-align:left;background:none;border:0;padding:12px;cursor:pointer;align-items:center}
-.ticon{grid-area:icon;position:relative;width:42px;height:42px;border-radius:12px;background:var(--chip);display:grid;place-items:center}
+.ticon{grid-area:icon;position:relative;width:54px;height:54px;border-radius:14px;background:var(--chip);display:grid;place-items:center}
+.ticon svg.i{width:32px;height:32px}
+.ticon .dot{width:12px;height:12px}
 .ticon .dot{position:absolute;right:-2px;bottom:-2px;box-shadow:0 0 0 2px var(--card)}
 .tile.off .ticon{opacity:.55}
 .tmain{grid-area:main;min-width:0;display:flex;flex-direction:column}
@@ -172,7 +181,7 @@ width:100%;text-align:left;background:none;border:0;padding:12px;cursor:pointer;
 .tmain .sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tmain .ip{font-size:12px;color:var(--muted)}
 .tside{grid-area:side;display:flex;flex-direction:column;align-items:flex-end;gap:6px;color:var(--muted)}
-.meter{display:inline-flex;gap:2px}.meter i{width:7px;height:12px;border-radius:2px;background:var(--line)}
+.meter{display:inline-flex;gap:3px}.meter i{width:8px;height:15px;border-radius:2px;background:var(--line)}
 .meter i.f{background:var(--accent)}
 .tmarks{grid-area:marks;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
 .flag{display:inline-flex;align-items:center;color:var(--muted)}
@@ -197,7 +206,7 @@ border-radius:8px;padding:4px 9px;text-decoration:none;cursor:pointer}
 main.list .grid{grid-template-columns:1fr;gap:4px}
 main.list .tile.open{grid-column:auto}
 main.list .thead{grid-template-columns:auto minmax(180px,1.4fr) minmax(0,2fr) auto;grid-template-areas:"icon main marks side";padding:6px 10px}
-main.list .ticon{width:32px;height:32px;border-radius:9px}
+main.list .ticon{width:40px;height:40px;border-radius:11px}main.list .ticon svg.i{width:26px;height:26px}
 main.list .tside{flex-direction:row;align-items:center}
 /* легенда */
 .legend{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px 14px;font-size:13px}

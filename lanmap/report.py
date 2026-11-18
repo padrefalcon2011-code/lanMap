@@ -42,6 +42,11 @@ def icon(name: str, cls: str = "", label: str | None = None) -> str:
     return f'<svg class="i {cls}"{aria}>{title}<use href="#i-{name}"/></svg>'
 
 
+def tip(text: str) -> str:
+    """Плавающая подсказка (CSS, работает и с клавиатуры) + подпись для экранного диктора."""
+    return f'data-tip="{e(text)}" aria-label="{e(text)}"'
+
+
 def type_icon(dev_type: str | None) -> str:
     return dev_type if dev_type in TYPES else "unknown"
 
@@ -410,8 +415,9 @@ def render(model: dict) -> str:
     count = Counter(d["identity"]["group"] for d in devs)
 
     gfilters = "".join(
-        f'<button class="gf" data-group="{e(g)}" title="{e(g)}">{icon(GROUP_ICONS.get(g, "unknown"), "s")}'
-        f'{e(GROUP_SHORT.get(g, g))}<small>{count[g]}</small></button>' for g in groups)
+        f'<button class="gf" data-group="{e(g)}" data-tip="{e(GROUP_SHORT.get(g, g))} · {count[g]}" '
+        f'aria-label="{e(g)}: {count[g]}">{icon(GROUP_ICONS.get(g, "unknown"))}'
+        f'<span class="badge">{count[g]}</span></button>' for g in groups)
     sections = []
     for g in groups:
         tiles = "".join(_tile(d, changes) for d in devs if d["identity"]["group"] == g)
@@ -420,7 +426,7 @@ def render(model: dict) -> str:
                         f'{icon(GROUP_ICONS.get(g, "unknown"))}{e(g)} <span class="n">{count[g]}</span></summary>'
                         f'<div class="grid">{tiles}</div></details>')
     has_changes = any(((changes or {}).get("by_key") or {}).get(d["key"]) for d in devs)
-    changed_btn = (f'<button class="iconbtn" id="f-changed" title="Только изменившиеся">{icon("delta", "s")}</button>'
+    changed_btn = (f'<button class="iconbtn" id="f-changed" {tip("Только изменившиеся")}>{icon("delta", "s")}</button>'
                    if has_changes else "")
     started = meta.get("started", "")[:16].replace("T", " ")
 
@@ -435,7 +441,7 @@ def render(model: dict) -> str:
     <h1>{icon("devices", "l")}Сеть {e(iface.get('network', '?'))}</h1>
     <span class="when">{e(started)}</span>
     <span class="spacer"></span>
-    <button class="iconbtn" id="theme" title="Светлая / тёмная тема">{icon("sun", "s")}{icon("moon", "s")}</button>
+    <button class="iconbtn tip-l" id="theme" {tip("Светлая / тёмная тема")}>{icon("sun", "s")}{icon("moon", "s")}</button>
   </div>
   {_pills(model)}
   {_kpis(model)}
@@ -445,17 +451,17 @@ def render(model: dict) -> str:
 <div class="bar">
   <label class="search">{icon("search", "s")}<input id="q" type="search" placeholder="IP, MAC, имя, порт…" autocomplete="off"></label>
   <span class="seg" role="group" aria-label="Состояние">
-    <button data-status="" title="Все">все</button>
-    <button data-status="on" title="В сети"><i class="dot"></i></button>
-    <button data-status="off" title="Не отвечали"><i class="dot off"></i></button>
+    <button data-status="" {tip("Все устройства")}>все</button>
+    <button data-status="on" {tip("В сети")}><i class="dot"></i></button>
+    <button data-status="off" {tip("Не отвечали")}><i class="dot off"></i></button>
   </span>
   {changed_btn}
-  <button class="iconbtn" id="f-low" title="Только неуверенно опознанные">{icon("question", "s")}</button>
+  <button class="iconbtn" id="f-low" {tip("Только неуверенно опознанные")}>{icon("question", "s")}</button>
   <span class="seg" role="group" aria-label="Вид">
-    <button data-view="tiles" title="Плитки">{icon("grid", "s")}</button>
-    <button data-view="list" title="Список">{icon("list", "s")}</button>
+    <button data-view="tiles" {tip("Плитки")}>{icon("grid", "s")}</button>
+    <button data-view="list" {tip("Список")}>{icon("list", "s")}</button>
   </span>
-  <button class="iconbtn" id="expand" title="Развернуть / свернуть все">{icon("expand", "s")}</button>
+  <button class="iconbtn tip-l" id="expand" {tip("Развернуть / свернуть все")}>{icon("expand", "s")}</button>
   <div class="gfilters">{gfilters}</div>
 </div>
 <main>{''.join(sections)}<p id="empty" class="note hidden">{icon("search", "s")}Ничего не найдено.</p></main>
