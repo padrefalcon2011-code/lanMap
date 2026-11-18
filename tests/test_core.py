@@ -588,11 +588,12 @@ class IgdTest(unittest.TestCase):
         sec = t.run_checks(m)
         self.assertTrue(sec["evaluated"]["UPNP_PORT_MAPPINGS"])
         f = next(f for f in sec["findings"] if f["id"] == "UPNP_PORT_MAPPINGS")
-        self.assertEqual((f["ips"][0], f["confidence"]), ("192.0.2.20", "confirmed"))
+        self.assertEqual((f["ips"][0], f["confidence"], f["priority"]), ("192.0.2.20", "confirmed", 1))
         # За NAT провайдера — «вероятно», и карточка объясняет почему
         t, m = self.igd_model([igd_entry(50000, "192.0.2.20", 5000)], external="100.64.1.2")
         sec = t.run_checks(m)
-        self.assertEqual(next(f for f in sec["findings"] if f["id"] == "UPNP_PORT_MAPPINGS")["confidence"], "likely")
+        nat = next(f for f in sec["findings"] if f["id"] == "UPNP_PORT_MAPPINGS")
+        self.assertEqual((nat["confidence"], nat["priority"]), ("likely", 2))
         from lanmap import report
         self.assertIn("CGNAT", report._security(m))
         # Список прочитан не до конца — не «чисто», а «нечем проверить»

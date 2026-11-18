@@ -138,7 +138,9 @@ def _upnp(ctx: Ctx) -> tuple[bool, list[dict]]:
     if not fw_mod.upnp_known(ctx.model):
         return False, []
     # Внешний адрес роутера из сети провайдера (или за вторым роутером) — снаружи двери, скорее всего, не видны
+    # Тогда находка «вероятно» и П2: срочности нет, но закрыть стоит — провайдер может выдать «белый» адрес
     reach = (ctx.model.get("igd") or {}).get("external_scope")
+    behind_nat = reach in ("cgnat", "private")
     by_ip = {ip: d for d in ctx.devices for ip in d["ips"]}
     groups: dict[str, list[dict]] = {}
     for f in fw_mod.merged(ctx.model):
@@ -149,7 +151,7 @@ def _upnp(ctx: Ctx) -> tuple[bool, list[dict]]:
         dev = by_ip.get(ip) or {"key": f"ip:{ip}", "ips": [ip], "title": ip, "identity": {"type": "unknown"}}
         ports = ", ".join(f'{f.get("port")}→{f.get("to_port")}' for f in fws)
         hits.append(_hit(dev, f"пробросов из интернета: {len(fws)} ({ports})",
-                         "likely" if reach in ("cgnat", "private") else "confirmed",
+                         "likely" if behind_nat else "confirmed", priority=2 if behind_nat else None,
                          extra={"router_based": True, "reach": reach,
                                 "forwards": [f'{(f.get("protocol") or "").upper()} {f.get("port")}→{f.get("to_port")}'
                                              for f in fws]}))
