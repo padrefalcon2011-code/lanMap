@@ -151,6 +151,48 @@ def cmd_confirm(args) -> int:
     return 0
 
 
+def cmd_finding(args) -> int:
+    from lanmap import security
+    snap = _snapshot_arg(None)
+    model = read_json(snap / "devices.json", {}) or {}
+    sec = model.get("security")
+    if sec is None:
+        raise SystemExit("В последнем срезе ещё нет проверок. Пересобери: python -m lanmap build")
+    if args.action == "list":
+        if not sec["findings"]:
+            print("Находок нет.")
+        for f in sec["findings"]:
+            status = security.STATUSES.get(f["status"], {"regress": "вернулась", "fixed_pending": "ждёт перепроверки"}
+                                           .get(f["status"], f["status"]))
+            print(f'П{f["priority"]}  {f["id"]:<20} {", ".join(f["ips"]) or f["key"]:<16} {status:<18} {f["detail"]}')
+        for cid, why in sec.get("skipped", {}).items():
+            print(f"не проверялось: {cid} — {why}")
+        print("\nОтметить: python -m lanmap finding set <ПРОВЕРКА> <IP|MAC|all> <статус> [--reason «почему»]")
+        print("Статусы: " + ", ".join(f"{k} ({v})" for k, v in security.STATUSES.items()))
+        return 0
+
+    if not args.check or not args.target or not args.status:
+        raise SystemExit("Нужно: finding set <ПРОВЕРКА> <IP|MAC|all> <статус>")
+    check = args.check.upper()
+    if check not in security.BY_ID:
+        raise SystemExit(f"Нет такой проверки: {check}. Есть: {', '.join(security.BY_ID)}")
+    if args.status not in security.STATUSES:
+        raise SystemExit(f"Нет такого статуса: {args.status}. Есть: {', '.join(security.STATUSES)}")
+    mac = norm_mac(args.target.partition("#")[0])
+    targets = [f for f in sec["findings"] if f["id"] == check and (
+        args.target == "all" or args.target in f["ips"] or f["key"] == args.target
+        or (mac and f["key"].partition("#")[0] == mac))]
+    if not targets:
+        raise SystemExit(f"В последнем срезе нет находки {check} для «{args.target}». Список: python -m lanmap finding list")
+    for f in targets:
+        security.set_status(check, f["key"], args.status, args.reason)
+        print(f'{check} · {f["title"]}: {security.STATUSES[args.status]}')
+    from lanmap.build import build
+    build(snap)
+    print(f"Отчёт пересобран: {snap / 'report.html'}")
+    return 0
+
+
 def _gateway() -> str:
     net = _pick_network(None, True)
     if not net.gateway:
@@ -253,6 +295,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("confirm", help="подтвердить черновики реестра как есть")
     p.add_argument("targets", nargs="+", help="MAC или IP")
     p.set_defaults(func=cmd_confirm)
+
+    p = sub.add_parser("finding", help="находки безопасности: список и отметки (в работе, исправлена, принята…)")
+    p.add_argument("action", choices=["list", "set"])
+    p.add_argument("check", nargs="?", help="идентификатор проверки, например TELNET_OPEN")
+    p.add_argument("target", nargs="?", help="IP или MAC устройства из последнего среза, или all")
+    p.add_argument("status", nargs="?", help="open, in_progress, fixed, accepted, na")
+    p.add_argument("--reason", help="почему (для «принята осознанно» и «не применимо»)")
+    p.set_defaults(func=cmd_finding)
 
     p = sub.add_parser("router", help="вход в роутер (только чтение) и проверка доступа")
     p.add_argument("action", choices=["login", "test", "forget", "probe"],
