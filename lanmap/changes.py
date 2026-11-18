@@ -15,6 +15,7 @@ import ipaddress
 import re
 from pathlib import Path
 
+from lanmap import forwards as fw_mod
 from lanmap.util import read_json
 
 _SNAP_RE = re.compile(r"\d{4}-\d\d-\d\d_")
@@ -156,9 +157,7 @@ def _device_changes(old: dict, new: dict, tested_old: set[int] | None, tested_ne
     return items
 
 
-def _fw_key(f: dict) -> tuple:
-    return (f.get("kind"), (f.get("protocol") or "").lower(), str(f.get("port") or ""),
-            f.get("to_ip"), str(f.get("to_port") or ""))
+_fw_key = fw_mod.fw_key
 
 
 def _findings_diff(old: dict, new: dict, pairs: list[tuple[dict, dict]], tested_old: set[int] | None,
@@ -252,15 +251,20 @@ def compare(old: dict, new: dict, tested_old: set[int] | None = None, tested_new
         if items:
             result["by_key"][b["key"]] = items
 
-    if old_router and new_router:
-        of = {_fw_key(f): f for f in old_router.get("forwards") or []}
-        nf = {_fw_key(f): f for f in new_router.get("forwards") or []}
+    # Пробросы сравниваются только тех видов, что оба среза видят целиком (статические — только через
+    # модуль роутера, UPnP — ещё и через IGD без пароля)
+    kinds = fw_mod.known_kinds(old) & fw_mod.known_kinds(new)
+    if kinds:
+        of = {_fw_key(f): f for f in fw_mod.merged(old) if f.get("kind") in kinds}
+        nf = {_fw_key(f): f for f in fw_mod.merged(new) if f.get("kind") in kinds}
         result["forwards_added"] = [nf[k] for k in nf if k not in of]
         result["forwards_removed"] = [of[k] for k in of if k not in nf]
-        if old_router.get("firmware") and new_router.get("firmware") and old_router["firmware"] != new_router["firmware"]:
-            result["router"].append(f'прошивка роутера: {old_router["firmware"]} → {new_router["firmware"]}')
-    elif new_router and not old_router:
-        result["first_seen_router"]["forwards"] = len(new_router.get("forwards") or [])
+    if fw_mod.known_kinds(new) - fw_mod.known_kinds(old):
+        result["first_seen_router"]["forwards"] = sum(
+            1 for f in fw_mod.merged(new) if f.get("kind") in fw_mod.known_kinds(new) - fw_mod.known_kinds(old))
+    if old_router and new_router and old_router.get("firmware") and new_router.get("firmware") \
+            and old_router["firmware"] != new_router["firmware"]:
+        result["router"].append(f'прошивка роутера: {old_router["firmware"]} → {new_router["firmware"]}')
 
     added, removed, first = _findings_diff(old, new, pairs, tested_old, tested_new)
     result["findings_added"], result["findings_removed"] = added, removed
@@ -277,7 +281,10 @@ def compare(old: dict, new: dict, tested_old: set[int] | None = None, tested_new
             f'В прошлом срезе не было данных роутера: {fs["devices"]} устройств и {fs["forwards"]} пробросов '
             "увидены через роутер впервые — это не значит, что они новые.")
     elif old_router and not new_router:
-        result["notes"].append("В этом срезе нет данных роутера: пробросы и устройства, известные только роутеру, не сравнивались.")
+        result["notes"].append(
+            "В этом срезе нет данных роутера: статические пробросы и устройства, известные только роутеру, не "
+            "сравнивались (UPnP-пробросы сравнены по ответу роутера без пароля)." if "upnp" in kinds else
+            "В этом срезе нет данных роутера: пробросы и устройства, известные только роутеру, не сравнивались.")
     if tested_old and tested_new and tested_old != tested_new:
         result["notes"].append("Набор проверяемых портов в срезах разный: сравниваются только порты, проверенные оба раза.")
 

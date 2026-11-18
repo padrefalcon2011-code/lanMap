@@ -475,6 +475,150 @@ class SecurityTest(unittest.TestCase):
         self.assertTrue(any("нечем было проверить" in n for n in c["notes"]))
 
 
+IGD_DESC = """<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"><device>
+<deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType>
+<serviceList><service><serviceType>urn:schemas-upnp-org:service:Layer3Forwarding:1</serviceType>
+<controlURL>/ctl/L3F</controlURL></service></serviceList>
+<deviceList><device><deviceType>urn:schemas-upnp-org:device:WANDevice:1</deviceType>
+<deviceList><device><deviceType>urn:schemas-upnp-org:device:WANConnectionDevice:1</deviceType>
+<serviceList>
+<service><serviceType>urn:schemas-upnp-org:service:WANPPPConnection:1</serviceType><controlURL>/ctl/PPP</controlURL></service>
+<service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType><controlURL>/ctl/IPConn</controlURL></service>
+</serviceList></device></deviceList></device></deviceList></device></root>"""
+
+
+def soap_ok(**fields) -> bytes:
+    inner = "".join(f"<{k}>{v}</{k}>" for k, v in fields.items())
+    return (f'<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>'
+            f'<u:R xmlns:u="urn:x">{inner}</u:R></s:Body></s:Envelope>').encode()
+
+
+def soap_fault(code: str, text: str) -> bytes:
+    return (f'<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault>'
+            f'<faultstring>UPnPError</faultstring><detail><UPnPError xmlns="urn:schemas-upnp-org:control-1-0">'
+            f'<errorCode>{code}</errorCode><errorDescription>{text}</errorDescription></UPnPError></detail>'
+            f'</s:Fault></s:Body></s:Envelope>').encode()
+
+
+class FakeGateway:
+    """Выдуманный шлюз IGD: отвечает на SOAP без сети и запоминает действия."""
+
+    def __init__(self, entries, external="8.8.8.8", fail_at=None):  # публичный адрес (адреса RFC 5737 Python считает частными)
+        self.entries, self.external, self.fail_at, self.actions = entries, external, fail_at, []
+
+    def __call__(self, url, data, headers):
+        action = headers["SOAPAction"].strip('"').split("#")[1]
+        self.actions.append(action)
+        if action == "GetExternalIPAddress":
+            return 200, soap_ok(NewExternalIPAddress=self.external)
+        index = int(re.search(rb"<NewPortMappingIndex>(\d+)<", data)[1])
+        if index == self.fail_at:
+            return 500, soap_fault("501", "ActionFailed")
+        if index >= len(self.entries):
+            return 500, soap_fault("713", "SpecifiedArrayIndexInvalid")
+        return 200, soap_ok(**self.entries[index])
+
+
+def igd_entry(port, to_ip, to_port, proto="TCP", enabled="1"):
+    return {"NewRemoteHost": "", "NewExternalPort": port, "NewProtocol": proto, "NewInternalPort": to_port,
+            "NewInternalClient": to_ip, "NewEnabled": enabled, "NewPortMappingDescription": "app",
+            "NewLeaseDuration": 0}
+
+
+class IgdTest(unittest.TestCase):
+    CTX = ScanContext(local_ip="192.0.2.50", network="192.0.2.0/24", gateway="192.0.2.1", if_index=0)
+    DESC = [{"url": "http://192.0.2.1:1900/rootDesc.xml", "ip": "192.0.2.1", "body": IGD_DESC}]
+
+    def test_services_from_nested_description(self):
+        from lanmap.collectors import igd
+        svcs = igd.wan_services(IGD_DESC, "http://192.0.2.1:1900/rootDesc.xml")
+        self.assertEqual([s["service"].split(":")[-2] for s in svcs], ["WANIPConnection", "WANPPPConnection"])
+        self.assertEqual(svcs[0]["control_url"], "http://192.0.2.1:1900/ctl/IPConn")  # относительный → абсолютный
+
+    def test_only_read_actions(self):
+        from lanmap.collectors import igd
+        for action in ("AddPortMapping", "DeletePortMapping", "SetConnectionType", "ForceTermination"):
+            with self.assertRaises(PermissionError):
+                igd.envelope("urn:schemas-upnp-org:service:WANIPConnection:1", action)
+
+    def test_full_list_and_normalize(self):
+        from lanmap.collectors import igd
+        gw = FakeGateway([igd_entry(50000, "192.0.2.20", 5000), igd_entry(50001, "192.0.2.21", 80, enabled="0")])
+        raw = igd.collect(self.CTX, self.DESC, post=gw)
+        g = raw["gateways"][0]
+        self.assertTrue(g["complete"])
+        self.assertEqual(g["termination"]["code"], "713")
+        self.assertEqual(set(gw.actions), igd.READ_ONLY_ACTIONS)
+        n = igd.normalize(raw)
+        self.assertEqual(n["forwards"], [{"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20",
+                                          "to_port": 5000, "description": "app", "source": "igd"}])  # выключенная — пропущена
+        self.assertEqual(n["external_scope"], "public")
+
+    def test_broken_list_is_not_complete(self):
+        from lanmap.collectors import igd
+        raw = igd.collect(self.CTX, self.DESC, post=FakeGateway([igd_entry(50000, "192.0.2.20", 5000)] * 3, fail_at=1))
+        self.assertFalse(raw["gateways"][0]["complete"])
+        self.assertFalse(igd.normalize(raw)["complete"])
+
+    def test_control_url_outside_subnet_is_skipped(self):
+        from lanmap.collectors import igd
+        body = IGD_DESC.replace("<root xmlns=\"urn:schemas-upnp-org:device-1-0\">",
+                                "<root xmlns=\"urn:schemas-upnp-org:device-1-0\"><URLBase>http://198.51.100.9/</URLBase>")
+        gw = FakeGateway([])
+        self.assertEqual(igd.collect(self.CTX, [{**self.DESC[0], "body": body}], post=gw), {"gateways": []})
+        self.assertEqual(gw.actions, [])
+
+    def test_external_scope(self):
+        from lanmap.collectors import igd
+        self.assertEqual(igd.external_scope("100.64.1.2"), "cgnat")
+        self.assertEqual(igd.external_scope("198.51.100.4"), "private")  # служебные адреса Python считает частными
+        self.assertEqual(igd.external_scope("203.0.113.300"), None)
+        self.assertEqual(igd.external_scope("0.0.0.0"), None)
+        self.assertEqual(igd.external_scope("8.8.8.8"), "public")
+
+    def igd_model(self, entries, external="8.8.8.8", fail_at=None, router=None):
+        from lanmap.collectors import igd
+        t = SecurityTest()
+        m = t.net(router=router)
+        m["igd"] = igd.normalize(igd.collect(self.CTX, self.DESC, post=FakeGateway(entries, external, fail_at)))
+        return t, m
+
+    def test_upnp_check_without_router(self):
+        t, m = self.igd_model([igd_entry(50000, "192.0.2.20", 5000)])
+        sec = t.run_checks(m)
+        self.assertTrue(sec["evaluated"]["UPNP_PORT_MAPPINGS"])
+        f = next(f for f in sec["findings"] if f["id"] == "UPNP_PORT_MAPPINGS")
+        self.assertEqual((f["ips"][0], f["confidence"]), ("192.0.2.20", "confirmed"))
+        # За NAT провайдера — «вероятно», и карточка объясняет почему
+        t, m = self.igd_model([igd_entry(50000, "192.0.2.20", 5000)], external="100.64.1.2")
+        sec = t.run_checks(m)
+        self.assertEqual(next(f for f in sec["findings"] if f["id"] == "UPNP_PORT_MAPPINGS")["confidence"], "likely")
+        from lanmap import report
+        self.assertIn("CGNAT", report._security(m))
+        # Список прочитан не до конца — не «чисто», а «нечем проверить»
+        t, m = self.igd_model([igd_entry(50000, "192.0.2.20", 5000)] * 3, fail_at=1)
+        self.assertFalse(t.run_checks(m)["evaluated"]["UPNP_PORT_MAPPINGS"])
+
+    def test_router_and_igd_do_not_duplicate(self):
+        from lanmap import forwards
+        fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": "5000"}
+        _, m = self.igd_model([igd_entry(50000, "192.0.2.20", 5000), igd_entry(50002, "192.0.2.20", 22)],
+                              router={"forwards": [fw]})
+        self.assertEqual(len(forwards.merged(m)), 2)
+        self.assertEqual(forwards.merged(m)[0], fw)  # запись роутера главнее
+
+    def test_compare_router_vs_igd_only(self):
+        from lanmap import changes
+        upnp = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
+        static = {"kind": "static", "protocol": "tcp", "port": 443, "to_ip": "192.0.2.20", "to_port": 443}
+        old = SecurityTest().net(router={"forwards": [upnp, static]})
+        _, new = self.igd_model([igd_entry(50000, "192.0.2.20", 5000), igd_entry(50003, "192.0.2.21", 80)])
+        c = changes.compare(old, new)
+        self.assertEqual(c["forwards_removed"], [])  # статический не «закрылся»: его просто не видно без роутера
+        self.assertEqual([f["port"] for f in c["forwards_added"]], [50003])
+        self.assertTrue(any("UPnP-пробросы сравнены" in n for n in c["notes"]))
+
+
 class NoNetworkSpecificsTest(unittest.TestCase):
     def test_no_control_characters(self):
         for path in list(PACKAGE_DIR.rglob("*.py")) + list(PACKAGE_DIR.rglob("*.json")):

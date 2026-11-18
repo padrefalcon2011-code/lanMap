@@ -10,6 +10,7 @@ import html
 import ipaddress
 from collections import Counter
 
+from lanmap import forwards as fw_mod
 from lanmap import security as sec_mod
 from lanmap.devices import connection_text
 from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
@@ -367,6 +368,17 @@ STATUS_CHIPS = {
 }
 
 
+# Оговорка к UPnP-карточке по внешнему адресу роутера (его сообщает сам роутер по UPnP)
+REACH_NOTES = {
+    "public": "Внешний адрес роутера — настоящий, из интернета: двери, скорее всего, видны снаружи. "
+              "Сам вход снаружи LanMap не проверял.",
+    "cgnat": "Внешний адрес роутера — из сети провайдера (CGNAT): перед роутером ещё один NAT, и снаружи эти двери, "
+             "скорее всего, не видны. Но провайдер может выдать «белый» адрес — и они откроются.",
+    "private": "Внешний адрес роутера — частный: перед ним ещё один NAT (провайдер или второй роутер), снаружи двери, "
+               "скорее всего, не видны. Если наверху тоже включён UPnP — могут открыться и там.",
+}
+
+
 def _status_chip(f: dict) -> str:
     if f["status"] not in STATUS_CHIPS:
         return ""
@@ -460,7 +472,8 @@ def _finding_card(check, items: list[dict], present: set[str], rvendor: str | No
             f'<div class="hgrid"><div class="hbox"><b>{icon("alert", "s")}Что может сломаться</b>{e(check.breaks)}</div>'
             f'<div class="hbox"><b>{icon("undo", "s")}Как вернуть</b>{e(check.rollback)}</div>'
             f'<div class="hbox"><b>{icon("check", "s")}Как убедиться</b>{e(check.verify)}</div></div></details>')
-    note = f'<div class="fnote">{icon("info", "s")}<span>{e(check.note)}</span></div>' if check.note else ""
+    note_text = REACH_NOTES.get(next((f.get("reach") for f in items if f.get("reach")), None), check.note)
+    note = f'<div class="fnote">{icon("info", "s")}<span>{e(note_text)}</span></div>' if note_text else ""
     return (f'<article class="scard p{prio}{" quiet" if not live else ""}" id="sec-{e(check.id)}">'
             f'<div class="fhead"><span class="fico">{icon(check.icon)}</span><h3>{e(check.title)}</h3>'
             f'<span class="prio">{icon("alert", "s")}{e(sec_mod.PRIORITY_NAMES[prio])}</span>'
@@ -515,8 +528,7 @@ def _security(model: dict) -> str:
 
 
 def _forwards(model: dict) -> str:
-    router = model.get("router")
-    fw = (router or {}).get("forwards") or []
+    fw = fw_mod.merged(model)
     if not fw:
         return ""
     devs = model["devices"]
@@ -584,8 +596,8 @@ def _kpis(model: dict) -> str:
         top = min((f["priority"] for f in live), default=0)
         tiles.append(f'<button class="kpi {"crit" if top == 1 else ""}" data-kpi="security"><span class="ico">'
                      f'{icon("shield")}</span><span><b>{len(live)}</b><span class="l">находок безопасности</span></span></button>')
-    fw = ((model.get("router") or {}).get("forwards") or [])
-    if model.get("router"):
+    fw = fw_mod.merged(model)
+    if fw_mod.upnp_known(model):
         tiles.append(f'<button class="kpi {"crit" if fw else ""}" data-kpi="doors"><span class="ico">{icon("globe")}</span>'
                      f'<span><b>{len(fw)}</b><span class="l">дверей из интернета</span></span></button>')
     return f'<div class="kpis">{"".join(tiles)}</div>'

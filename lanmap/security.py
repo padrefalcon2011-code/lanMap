@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from lanmap import forwards as fw_mod
 from lanmap.util import data_dir, now_iso, read_json, write_json
 
 PRIORITY_NAMES = {1: "П1 срочно", 2: "П2 важно", 3: "П3 желательно"}
@@ -133,20 +134,24 @@ def _port_check(port: int, types: set[str] | None = None, confidence: str = "lik
 # --- проверки ------------------------------------------------------------------------------
 
 def _upnp(ctx: Ctx) -> tuple[bool, list[dict]]:
-    router = ctx.model.get("router")
-    if not router:
+    # Источник — модуль роутера или UPnP IGD, прочитанный до конца (неполный список не даёт «чисто»)
+    if not fw_mod.upnp_known(ctx.model):
         return False, []
+    # Внешний адрес роутера из сети провайдера (или за вторым роутером) — снаружи двери, скорее всего, не видны
+    reach = (ctx.model.get("igd") or {}).get("external_scope")
     by_ip = {ip: d for d in ctx.devices for ip in d["ips"]}
     groups: dict[str, list[dict]] = {}
-    for f in router.get("forwards") or []:
+    for f in fw_mod.merged(ctx.model):
         if f.get("kind") == "upnp":
             groups.setdefault(f.get("to_ip") or "?", []).append(f)
     hits = []
     for ip, fws in groups.items():
         dev = by_ip.get(ip) or {"key": f"ip:{ip}", "ips": [ip], "title": ip, "identity": {"type": "unknown"}}
         ports = ", ".join(f'{f.get("port")}→{f.get("to_port")}' for f in fws)
-        hits.append(_hit(dev, f"пробросов из интернета: {len(fws)} ({ports})", "confirmed",
-                         extra={"router_based": True, "forwards": [f'{(f.get("protocol") or "").upper()} {f.get("port")}→{f.get("to_port")}'
+        hits.append(_hit(dev, f"пробросов из интернета: {len(fws)} ({ports})",
+                         "likely" if reach in ("cgnat", "private") else "confirmed",
+                         extra={"router_based": True, "reach": reach,
+                                "forwards": [f'{(f.get("protocol") or "").upper()} {f.get("port")}→{f.get("to_port")}'
                                              for f in fws]}))
     return True, hits
 
@@ -256,7 +261,8 @@ CHECKS: list[Check] = [
                "внешние ссылки на файлы. Некоторые игровые приставки без UPnP хуже находят друзей в сетевой игре.",
         rollback="Включи UPnP обратно на роутере и на устройстве: правила создадутся сами при следующем запуске.",
         verify="В новом срезе нет пробросов к устройству. Доступ снаружи работает только через VPN или облако.",
-        detect=_upnp, needs="нужны данные роутера (python -m lanmap router login)",
+        detect=_upnp, needs="роутер не ответил по UPnP (или список прочитан не до конца), а входа в роутер нет "
+                            "(python -m lanmap router login)",
     ),
     Check(
         id="TELNET_OPEN", title="Управление по Telnet — пароль идёт открытым текстом", icon="key", priority=1,

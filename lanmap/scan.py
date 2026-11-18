@@ -10,7 +10,7 @@ import urllib.parse
 from pathlib import Path
 
 from lanmap import __version__, netinfo
-from lanmap.collectors import ScanContext, discovery, protocols, tcp
+from lanmap.collectors import ScanContext, discovery, igd, protocols, tcp
 from lanmap.collectors import dnswire
 from lanmap.ports import QUICK
 from lanmap.util import data_dir, now_iso, write_json
@@ -152,6 +152,8 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
         smb, onvif = list(f_smb), list(f_onvif)
     write_json(raw / "names.json", names)
     write_json(raw / "upnp.json", upnp)
+    progress.step("UPnP-пробросы у шлюза (без пароля, только чтение)")
+    write_json(raw / "upnp_igd.json", igd.collect(ctx, upnp))
     write_json(raw / "onvif.json", onvif)
     write_json(raw / "smb.json", smb)
 
