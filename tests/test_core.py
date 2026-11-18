@@ -329,6 +329,123 @@ class ChangesTest(unittest.TestCase):
         self.assertIn("Сеть", render(bare))
 
 
+def sdev(key, ip, dev_type, ports=(), alive=True, gateway=False, local=False, facts=None, vendor=None):
+    """Устройство модели для проверок безопасности."""
+    d = mdev(key, [ip], alive=alive, ports=ports)
+    d["facts"].update(facts or {})
+    d["identity"] = {"type": dev_type, "vendor": vendor, "firmware": None, "name": None}
+    d.update(is_gateway=gateway, is_local=local)
+    return d
+
+
+class SecurityTest(unittest.TestCase):
+    TESTED = {23, 80, 111, 2049, 5555, 34567}
+
+    def snap(self, onvif=True, smb=True) -> Path:
+        base = Path(tempfile.mkdtemp(dir=TMP.name)) / "2026-01-02_100000"
+        (base / "raw").mkdir(parents=True)
+        if onvif:
+            write_json(base / "raw" / "onvif.json", [])
+        if smb:
+            write_json(base / "raw" / "smb.json", [])
+        return base
+
+    def net(self, router=None, cam_ports=(80, 34567), router_ports=(23, 80), cam_alive=True, started="2026-01-02T10:00:00"):
+        devs = [
+            sdev(MAC_B, "192.0.2.1", "router", ports=router_ports, gateway=True, vendor="Keenetic"),
+            sdev(MAC_C, "192.0.2.10", "camera", ports=cam_ports, alive=cam_alive,
+                 facts={"onvif": {"anonymous": True, "Model": "X1"}}),
+            sdev("00:00:5E:00:53:0D", "192.0.2.20", "nas", ports=[80, 111, 2049], vendor="Synology",
+                 facts={"smb": {"status": "0x0", "dialect": "0x311", "signing_enabled": True, "signing_required": False}}),
+            sdev("00:00:5E:00:53:0E", "192.0.2.30", "computer", ports=[445], local=True,
+                 facts={"smb": {"status": "0x0", "signing_required": False}}),
+        ]
+        m = model(devs, router=router)
+        m["meta"]["started"] = started
+        return m
+
+    def run_checks(self, m, statuses=None, **kw):
+        from lanmap import security
+        m["security"] = security.evaluate(m, self.snap(**kw), self.TESTED, statuses or {})
+        return m["security"]
+
+    def ids(self, sec):
+        return sorted((f["id"], f["ips"][0]) for f in sec["findings"])
+
+    def test_findings_and_priorities(self):
+        sec = self.run_checks(self.net())
+        found = self.ids(sec)
+        self.assertIn(("TELNET_OPEN", "192.0.2.1"), found)
+        self.assertIn(("CAMERA_XM_PORT", "192.0.2.10"), found)
+        self.assertIn(("CAMERA_ONVIF_ANON", "192.0.2.10"), found)
+        self.assertIn(("NAS_EXTRA_SERVICES", "192.0.2.20"), found)
+        self.assertIn(("SMB_SIGNING", "192.0.2.20"), found)
+        self.assertNotIn(("SMB_SIGNING", "192.0.2.30"), found)  # этот компьютер не проверяем по сети
+        telnet = next(f for f in sec["findings"] if f["id"] == "TELNET_OPEN")
+        self.assertEqual(telnet["priority"], 1)  # Telnet на роутере — срочно
+        self.assertFalse(sec["evaluated"]["UPNP_PORT_MAPPINGS"])  # нет данных роутера — не «чисто», а «нечем проверить»
+        self.assertIn("UPNP_PORT_MAPPINGS", sec["skipped"])
+
+    def test_upnp_needs_router(self):
+        fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
+        sec = self.run_checks(self.net(router={"forwards": [fw, {**fw, "kind": "static"}]}))
+        upnp = [f for f in sec["findings"] if f["id"] == "UPNP_PORT_MAPPINGS"]
+        self.assertEqual(len(upnp), 1)
+        self.assertEqual(upnp[0]["key"], "00:00:5E:00:53:0D")
+        self.assertTrue(upnp[0]["router_based"])
+
+    def test_missing_raw_is_not_clean(self):
+        sec = self.run_checks(self.net(), onvif=False, smb=False)
+        self.assertFalse(sec["evaluated"]["CAMERA_ONVIF_ANON"])
+        self.assertFalse(sec["evaluated"]["SMB_SIGNING"])
+
+    def test_statuses_and_regress(self):
+        from lanmap import security
+        u = security.uid("TELNET_OPEN", MAC_B)
+        sec = self.run_checks(self.net(), {u: {"status": "fixed", "updated": "2026-01-01T00:00:00"}})
+        self.assertEqual(next(f for f in sec["findings"] if f["uid"] == u)["status"], "regress")
+        sec = self.run_checks(self.net(started="2025-12-31T00:00:00"), {u: {"status": "fixed", "updated": "2026-01-01T00:00:00"}})
+        self.assertEqual(next(f for f in sec["findings"] if f["uid"] == u)["status"], "fixed_pending")
+        sec = self.run_checks(self.net(), {u: {"status": "accepted", "updated": "2026-01-01T00:00:00"}})
+        self.assertNotIn(u, [f["uid"] for f in security.open_findings(sec)])
+        # Статус живёт в data/findings.json
+        security.set_status("TELNET_OPEN", MAC_B, "accepted", "нужен для скрипта")
+        self.assertEqual(security.load_statuses()[u]["status"], "accepted")
+        security.set_status("TELNET_OPEN", MAC_B, "open")
+        self.assertNotIn(u, security.load_statuses())
+        with self.assertRaises(ValueError):
+            security.set_status("NO_SUCH", MAC_B, "open")
+
+    def test_findings_diff(self):
+        from lanmap import changes
+        old, new = self.net(), self.net(router_ports=(80,), cam_ports=(80,), cam_alive=True)
+        self.run_checks(old)
+        self.run_checks(new)
+        c = changes.compare(old, new, self.TESTED, self.TESTED)
+        gone = sorted(f["id"] for f in c["findings_removed"])
+        self.assertEqual(gone, ["CAMERA_XM_PORT", "TELNET_OPEN"])
+        self.assertEqual(c["findings_added"], [])
+        # Камера не ответила — её находка не «исправлена», а просто не проверена
+        new2 = self.net(router_ports=(80,), cam_alive=False)
+        self.run_checks(new2)
+        c2 = changes.compare(old, new2, self.TESTED, self.TESTED)
+        self.assertEqual(sorted(f["id"] for f in c2["findings_removed"]), ["TELNET_OPEN"])
+        # Обратно: Telnet открылся — новая находка и значок на плитке
+        c3 = changes.compare(new, old, self.TESTED, self.TESTED)
+        self.assertIn("TELNET_OPEN", [f["id"] for f in c3["findings_added"]])
+        self.assertIn("finding", [x["what"] for x in c3["by_key"][MAC_B]])
+
+    def test_first_check_is_not_new(self):
+        from lanmap import changes
+        old = self.net()
+        self.run_checks(old, onvif=False)
+        new = self.net()
+        self.run_checks(new)
+        c = changes.compare(old, new, self.TESTED, self.TESTED)
+        self.assertNotIn("CAMERA_ONVIF_ANON", [f["id"] for f in c["findings_added"]])
+        self.assertTrue(any("нечем было проверить" in n for n in c["notes"]))
+
+
 class NoNetworkSpecificsTest(unittest.TestCase):
     def test_no_control_characters(self):
         for path in list(PACKAGE_DIR.rglob("*.py")) + list(PACKAGE_DIR.rglob("*.json")):

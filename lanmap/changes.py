@@ -161,6 +161,50 @@ def _fw_key(f: dict) -> tuple:
             f.get("to_ip"), str(f.get("to_port") or ""))
 
 
+def _findings_diff(old: dict, new: dict, pairs: list[tuple[dict, dict]], tested_old: set[int] | None,
+                   tested_new: set[int] | None) -> tuple[list[dict], list[dict], int]:
+    """Появившиеся и исчезнувшие находки безопасности. → (появились, исчезли, впервые проверены).
+
+    Находка «исчезла» только если проверка работала в обоих срезах, устройство отвечало и (для порта) порт
+    проверялся. Иначе это не исправление, а просто «нечем было проверить».
+    """
+    so, sn = old.get("security"), new.get("security")
+    if not so or not sn:
+        return [], [], 0
+    to_new = {a["key"]: b["key"] for a, b in pairs}
+    to_old = {v: k for k, v in to_new.items()}
+    old_devs = {d["key"]: d for d in old["devices"]}
+    new_devs = {d["key"]: d for d in new["devices"]}
+    old_f = {(f["id"], to_new.get(f["key"], f["key"])): f for f in so.get("findings") or []}
+    new_f = {(f["id"], f["key"]): f for f in sn.get("findings") or []}
+
+    def comparable(f: dict, dev: dict | None, tested: set[int] | None) -> bool:
+        if f.get("router_based") or dev is None:
+            return True
+        if not dev["alive"]:
+            return False
+        return f.get("port") is None or tested is None or f["port"] in tested
+
+    added, removed, first = [], [], 0
+    for k, f in new_f.items():
+        if k in old_f:
+            continue
+        if not (so.get("evaluated") or {}).get(f["id"]):
+            first += 1
+            continue
+        if comparable(f, old_devs.get(to_old.get(f["key"], f["key"])), tested_old):
+            added.append(f)
+    for k, f in old_f.items():
+        if k in new_f or not (sn.get("evaluated") or {}).get(f["id"]):
+            continue
+        dev = new_devs.get(k[1])
+        if dev is None:
+            continue  # устройство пропало — это уже видно в «Пропали»
+        if comparable(f, dev, tested_new):
+            removed.append({**f, "key": dev["key"], "title": dev.get("title") or dev["key"], "ips": dev["ips"]})
+    return added, removed, first
+
+
 def compare(old: dict, new: dict, tested_old: set[int] | None = None, tested_new: set[int] | None = None) -> dict:
     """Две модели (как в devices.json) → блок изменений для отчёта."""
     old_router, new_router = old.get("router"), new.get("router")
@@ -218,6 +262,15 @@ def compare(old: dict, new: dict, tested_old: set[int] | None = None, tested_new
     elif new_router and not old_router:
         result["first_seen_router"]["forwards"] = len(new_router.get("forwards") or [])
 
+    added, removed, first = _findings_diff(old, new, pairs, tested_old, tested_new)
+    result["findings_added"], result["findings_removed"] = added, removed
+    for f in added:
+        result["by_key"].setdefault(f["key"], []).append(
+            {"what": "finding", "short": "находка", "priority": f["priority"], "text": f'новая находка: {f["detail"]}'})
+    if first:
+        result["notes"].append(f"Находок, которые в прошлом срезе нечем было проверить: {first}. Это не значит, "
+                               "что они появились только сейчас.")
+
     fs = result["first_seen_router"]
     if fs["devices"] or fs["forwards"]:
         result["notes"].append(
@@ -230,7 +283,8 @@ def compare(old: dict, new: dict, tested_old: set[int] | None = None, tested_new
 
     result["total"] = (len(result["new"]) + len(result["gone"]) + len(result["changed"]) + len(result["online"])
                        + len(result["offline"]) + result["private"]["new"] + result["private"]["gone"]
-                       + len(result["forwards_added"]) + len(result["forwards_removed"]) + len(result["router"]))
+                       + len(result["forwards_added"]) + len(result["forwards_removed"]) + len(result["router"])
+                       + len(added) + len(removed))
     return result
 
 
@@ -239,4 +293,6 @@ def summary(changes: dict) -> str:
     parts = [f'новых {len(changes["new"])}', f'пропало {len(changes["gone"])}', f'изменилось {len(changes["changed"])}']
     if changes["forwards_added"] or changes["forwards_removed"]:
         parts.append(f'пробросы +{len(changes["forwards_added"])}/−{len(changes["forwards_removed"])}')
+    if changes.get("findings_added") or changes.get("findings_removed"):
+        parts.append(f'находки +{len(changes["findings_added"])}/−{len(changes["findings_removed"])}')
     return f'С прошлого среза ({changes["baseline"]}): ' + ", ".join(parts)

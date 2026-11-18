@@ -4,7 +4,7 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 
-from lanmap import actions, changes, devices, identify, oui, registry, routers
+from lanmap import actions, changes, devices, identify, oui, registry, routers, security
 from lanmap.report import render
 from lanmap.util import now_iso, read_json, write_json
 
@@ -62,6 +62,7 @@ def make_model(snapshot: Path, reg: dict | None = None) -> dict:
         "router_skipped": (read_json(snapshot / "raw" / "router.json") or {}).get("skipped"),
         "devices": devs,
     }
+    model["security"] = security.evaluate(model, snapshot, changes.tested_ports(snapshot))
     return model
 
 
