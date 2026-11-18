@@ -296,8 +296,37 @@ class ChangesTest(unittest.TestCase):
             write_json(base / name / "meta.json", {})
         self.assertEqual(changes.previous_snapshot(base / "2026-01-02_100000").name, "2026-01-01_100000")
         self.assertIsNone(changes.previous_snapshot(base / "2026-01-01_100000"))
-        c = self.cmp(model([]), model([mdev(MAC_B, ["192.0.2.10"])]))
-        self.assertIn("Новые устройства", _changes({"changes": c}))
+        new = model([mdev(MAC_B, ["192.0.2.10"])])
+        c = self.cmp(model([]), new)
+        self.assertIn("Новые устройства", _changes({**new, "changes": c}))
+
+    def test_render_smoke(self):
+        """Отчёт собирается в обоих вариантах: с роутером и изменениями, без роутера и без прошлого среза."""
+        from lanmap.report import render
+
+        def rdev(key, ip, dev_type, alive=True, ports=(), router=None):
+            d = mdev(key, [ip], alive=alive, ports=ports)
+            d["identity"] = {"type": dev_type, "type_label": dev_type, "group": "Камеры" if alive else
+                             "Сейчас не в сети (известны роутеру)", "vendor": "Test", "model": "X1", "firmware": "1.0",
+                             "os": None, "name": None, "confidence": 3, "chosen": {}, "rules": [], "conflicts": [],
+                             "notes": []}
+            d.update(is_local=False, is_gateway=False, duplicate_mac=False, evidence=[], registry=None, router=router,
+                     actions=[{"kind": "copy", "label": "IP", "value": ip}], subtitle="Камера")
+            return d
+
+        fw = {"kind": "upnp", "protocol": "tcp", "port": 5000, "to_ip": "192.0.2.10", "to_port": 5000}
+        cam = rdev(MAC_B, "192.0.2.10", "camera", ports=[23, 80],
+                   router={"active": True, "link": "wifi", "rssi": -75, "band": "2.4 ГГц"})
+        off = rdev(MAC_C, "192.0.2.12", "phone", alive=False, router={"active": False})
+        base = model([mdev(MAC_B, ["192.0.2.11"], ports=[80])], router={"forwards": [], "firmware": "1"})
+        full = model([cam, off], router={"forwards": [fw], "firmware": "1", "clients": [], "model": "R"})
+        full["changes"] = self.cmp(base, full)
+        full["meta"].update(admin=True, interface={"network": NET})
+        page = render(full)
+        for text in ("Открыто из интернета", "Изменения", "+23", "d-" + MAC_B, "wifi1"):
+            self.assertIn(text, page)
+        bare = model([rdev(MAC_B, "192.0.2.10", "camera")])
+        self.assertIn("Сеть", render(bare))
 
 
 class NoNetworkSpecificsTest(unittest.TestCase):

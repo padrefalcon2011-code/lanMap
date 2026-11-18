@@ -100,7 +100,8 @@ def _ip_sort(ips):
 
 def _brief(dev: dict) -> dict:
     return {"key": dev["key"], "title": dev.get("title") or dev["key"], "subtitle": dev.get("subtitle") or "",
-            "ips": _ip_sort(dev["ips"]), "mac": dev.get("mac")}
+            "ips": _ip_sort(dev["ips"]), "mac": dev.get("mac"),
+            "type": (dev.get("identity") or {}).get("type") or "unknown"}
 
 
 def _port_text(service: dict) -> str:
@@ -115,14 +116,15 @@ def _router_names(dev: dict) -> dict:
 def _device_changes(old: dict, new: dict, tested_old: set[int] | None, tested_new: set[int] | None) -> list[dict]:
     items: list[dict] = []
     if old["ips"] and new["ips"] and set(old["ips"]) != set(new["ips"]):
-        items.append({"what": "ip", "short": "IP",
+        items.append({"what": "ip", "short": "IP", "old": _ip_sort(old["ips"]), "new": _ip_sort(new["ips"]),
                       "text": f'IP: {", ".join(_ip_sort(old["ips"]))} → {", ".join(_ip_sort(new["ips"]))}'})
 
     # Имена сравниваются только из роутера: «имя в сети» в выводе зависит от того, были ли данные роутера
     ro, rn = _router_names(old), _router_names(new)
     for field, label in (("label", "подпись в роутере"), ("hostname", "DHCP-имя")):
         if ro[field] and rn[field] and ro[field] != rn[field]:
-            items.append({"what": "name", "short": "имя", "text": f"{label}: «{ro[field]}» → «{rn[field]}»"})
+            items.append({"what": "name", "short": "имя", "old": ro[field], "new": rn[field],
+                          "text": f"{label}: «{ro[field]}» → «{rn[field]}»"})
 
     so, sn = _serial(old), _serial(new)
     other_device = bool(so and sn and so != sn)
@@ -133,7 +135,7 @@ def _device_changes(old: dict, new: dict, tested_old: set[int] | None, tested_ne
 
     of, nf = old["identity"].get("firmware"), new["identity"].get("firmware")
     if of and nf and of != nf and not other_device:
-        items.append({"what": "firmware", "short": "прошивка", "text": f"прошивка: {of} → {nf}"})
+        items.append({"what": "firmware", "short": "прошивка", "old": of, "new": nf, "text": f"прошивка: {of} → {nf}"})
 
     if old["alive"] and new["alive"]:
         old_ports = {s["port"]: s for s in old["services"]}

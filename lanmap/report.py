@@ -1,14 +1,18 @@
-"""Статический HTML-отчёт по срезу: карточки устройств, улики, уверенность, ссылки-действия.
+"""Статический HTML-отчёт по срезу: показатели, «что изменилось», пробросы, плитки устройств.
 
+Минимум текста: тип — иконкой, состояние — точкой, уверенность — шкалой, изменения — значками.
+Подробности (факты, улики, правила) свёрнуты внутри плитки: опознание остаётся объяснимым.
 Файл самодостаточный (без внешних скриптов и шрифтов) и лежит в папке среза — данные личные.
 """
 from __future__ import annotations
 
 import html
+import ipaddress
 from collections import Counter
 
 from lanmap.devices import connection_text
-from lanmap.identify import LEVEL_NAMES
+from lanmap.identify import LEVEL_NAMES, TYPES
+from lanmap.report_assets import CSS, ICONS, JS
 
 SOURCE_NAMES = {
     "registry": "реестр владельца", "upnp": "UPnP", "onvif": "ONVIF", "mdns": "mDNS", "netbios": "NetBIOS",
@@ -18,11 +22,28 @@ SOURCE_NAMES = {
 }
 FIELD_NAMES = {"type": "Тип", "vendor": "Производитель", "model": "Модель", "firmware": "Прошивка",
                "os": "ОС", "name": "Имя", "group": "Группа"}
-CONF_CLASS = {4: "c4", 3: "c3", 2: "c2", 1: "c1", 0: "c0"}
+OFFLINE_GROUP = "Сейчас не в сети (известны роутеру)"
+GROUP_ICONS = {"Сеть": "router", "Компьютеры": "computer", "Хранилища": "nas", "Камеры": "camera",
+               "ТВ и приставки": "tv", "Колонки": "speaker", "Печать": "printer", "Умный дом": "iot",
+               "Телефоны и планшеты": "phone", "Не опознаны": "unknown", OFFLINE_GROUP: "offline"}
+GROUP_SHORT = {OFFLINE_GROUP: "Не в сети"}
+# Порты, открытость которых — уже повод насторожиться (подробные проверки — следующий этап)
+RISKY_PORTS = {23: "Telnet: пароль идёт открытым текстом", 5555: "ADB: удалённое управление Android без пароля"}
+MAX_TILE_PORTS = 6
 
 
 def e(value) -> str:
     return html.escape(str(value), quote=True)
+
+
+def icon(name: str, cls: str = "", label: str | None = None) -> str:
+    aria = f' role="img" aria-label="{e(label)}"' if label else ' aria-hidden="true"'
+    title = f"<title>{e(label)}</title>" if label else ""
+    return f'<svg class="i {cls}"{aria}>{title}<use href="#i-{name}"/></svg>'
+
+
+def type_icon(dev_type: str | None) -> str:
+    return dev_type if dev_type in TYPES else "unknown"
 
 
 def _source_label(source: str) -> str:
@@ -33,77 +54,122 @@ def _source_label(source: str) -> str:
     return SOURCE_NAMES.get(source, source)
 
 
-CHANGE_CLASS = {"new": "chg-new", "offline": "muted", "online": "info", "port_open": "chg-bad",
-                "serial": "warn", "port_closed": "info"}
+def _short_ips(old: list[str], new: list[str]) -> tuple[str, str]:
+    """«·10» вместо «192.0.2.10», если все адреса из одной /24."""
+    try:
+        nets = {ipaddress.ip_network(f"{ip}/24", strict=False) for ip in old + new}
+    except ValueError:
+        nets = set()
+    if len(nets) == 1:
+        return ", ".join("·" + ip.rsplit(".", 1)[1] for ip in old), ", ".join("·" + ip.rsplit(".", 1)[1] for ip in new)
+    return ", ".join(old), ", ".join(new)
 
 
-def _card_changes(dev: dict, changes: dict | None) -> tuple[str, str]:
-    """Пометки «что изменилось» для карточки: (бейджи, строка подробностей)."""
-    items = ((changes or {}).get("by_key") or {}).get(dev["key"]) or []
-    if not items:
-        return "", ""
-    badges = "".join(f'<span class="badge {CHANGE_CLASS.get(x["what"], "chg")}" title="{e(x["text"])}">{e(x["short"])}</span>'
-                     for x in items)
-    detail = "; ".join(x["text"] for x in items)
-    return badges, f'<p class="chg-line">С прошлого среза: {e(detail)}</p>'
+# --- значки изменений ------------------------------------------------------------------------
+
+def change_chip(item: dict) -> str:
+    """Одно изменение → компактный значок. Полный текст — в подсказке и для экранного диктора."""
+    what, text = item["what"], e(item["text"])
+    attrs = f'title="{text}" aria-label="{text}"'
+    if what == "new":
+        return f'<span class="pc add" {attrs}>{icon("plus", "s")}новое</span>'
+    if what == "gone":
+        return f'<span class="pc del" {attrs}>{icon("minus", "s")}пропало</span>'
+    if what == "port_open":
+        cls = "crit" if item.get("port") in RISKY_PORTS else "add"
+        return f'<span class="pc {cls}" {attrs}>+{e(item["port"])}</span>'
+    if what == "port_closed":
+        return f'<span class="pc del" {attrs}>{icon("minus", "s")}<s>{e(item["port"])}</s></span>'
+    if what == "ip":
+        old, new = _short_ips(item.get("old") or [], item.get("new") or [])
+        return f'<span class="pc trans" {attrs}>IP <s>{e(old)}</s>{icon("arrow", "s")}<span class="to">{e(new)}</span></span>'
+    if what == "online":
+        return f'<span class="pc trans" {attrs}><i class="dot off"></i>{icon("arrow", "s")}<i class="dot"></i></span>'
+    if what == "offline":
+        return f'<span class="pc trans del" {attrs}><i class="dot"></i>{icon("arrow", "s")}<i class="dot off"></i></span>'
+    if what == "name":
+        return f'<span class="pc" {attrs}>{icon("pencil", "s")}{e(item.get("new") or "")}</span>'
+    if what == "firmware":
+        return f'<span class="pc" {attrs}>{icon("chip", "s")}прошивка</span>'
+    if what == "serial":
+        return f'<span class="pc warn" {attrs}>{icon("barcode", "s")}≠ серийник</span>'
+    return f'<span class="pc" {attrs}>{e(item.get("short") or what)}</span>'
 
 
-def _card(dev: dict, changes: dict | None = None) -> str:
-    ident = dev["identity"]
-    reg = dev.get("registry") or {}
-    conf = ident["confidence"]
-    badges = [f'<span class="badge {CONF_CLASS[min(conf, 4)]}" title="Уверенность опознания">{e(LEVEL_NAMES[min(conf, 4)])}</span>']
-    if reg.get("confirmed"):
-        badges.append('<span class="badge ok">подписано</span>')
-    elif reg:
-        badges.append(f'<span class="badge draft" title="Черновик реестра, не подтверждён владельцем">предложено: {e(reg.get("source", "импорт"))}</span>')
-    if dev["is_local"]:
-        badges.append('<span class="badge info">этот компьютер</span>')
-    if dev["is_gateway"]:
-        badges.append('<span class="badge info">шлюз</span>')
-    if dev["private_mac"]:
-        badges.append('<span class="badge warn" title="Случайный MAC телефона/планшета/ноутбука">частный MAC</span>')
-    if not dev["alive"]:
-        badges.append('<span class="badge muted">не отвечало</span>')
+# --- плитка устройства -----------------------------------------------------------------------
+
+def _connection(r: dict) -> str:
+    if not r or not r.get("active"):
+        return ""
+    tip = connection_text(r).removeprefix("Роутер: ")
+    if r.get("link") == "wifi":
+        rssi = r.get("rssi")
+        bars = 3 if rssi is None or rssi >= -60 else 2 if rssi >= -72 else 1
+        return icon(f"wifi{bars}", "s", "Wi-Fi: " + tip)
+    if r.get("link") == "wired":
+        return icon("cable", "s", "Кабель: " + tip)
+    return ""
+
+
+def _meter(conf: int) -> str:
+    conf = min(conf, 4)
+    cells = "".join(f'<i class="{"f" if n < conf else ""}"></i>' for n in range(4))
+    label = f"Уверенность опознания: {LEVEL_NAMES[conf]}"
+    return f'<span class="meter" title="{e(label)}" role="img" aria-label="{e(label)}">{cells}</span>'
+
+
+def _port_chip(s: dict, full: bool = False) -> str:
+    name = s.get("name") or ""
+    tip = " · ".join(x for x in (name, (s.get("http") or {}).get("title"), RISKY_PORTS.get(s["port"])) if x)
+    cls = "crit" if s["port"] in RISKY_PORTS else ""
+    label = f'{s["port"]}' + (f" {name}" if full and name else "")
+    warn = icon("alert", "s") if s["port"] in RISKY_PORTS else ""
+    return f'<span class="pc {cls}" title="{e(tip)}">{warn}{e(label)}</span>'
+
+
+def _flags(dev: dict) -> str:
+    out = []
     r = dev.get("router") or {}
-    if dev.get("router_only"):
-        badges.append('<span class="badge muted" title="Сканирование устройство не видело, о нём знает только роутер">только роутер</span>')
-    if r.get("segment") and r["segment"].lower() not in ("home", "домашняя сеть"):
-        badges.append(f'<span class="badge warn" title="Сегмент сети по данным роутера">{e(r["segment"])}</span>')
+    reg = dev.get("registry") or {}
+    if reg.get("confirmed"):
+        out.append(f'<span class="flag acc">{icon("check", "s", "Подписано владельцем")}</span>')
+    if dev["is_local"]:
+        out.append(f'<span class="flag acc">{icon("user", "s", "Этот компьютер")}</span>')
+    if dev["is_gateway"]:
+        out.append(f'<span class="flag acc">{icon("router", "s", "Шлюз (выход в интернет)")}</span>')
+    if dev["private_mac"]:
+        out.append(f'<span class="flag">{icon("shuffle", "s", "Частный (случайный) MAC телефона или ноутбука")}</span>')
     if dev.get("duplicate_mac"):
-        badges.append('<span class="badge warn" title="Тот же MAC у другого устройства: мост/ретранслятор или одинаковый MAC">общий MAC</span>')
+        out.append(f'<span class="flag warn">{icon("link", "s", "Общий MAC с другим устройством: мост или ретранслятор")}</span>')
+    if r.get("segment") and r["segment"].lower() not in ("home", "домашняя сеть"):
+        out.append(f'<span class="pc warn" title="Сегмент сети по данным роутера">{e(r["segment"])}</span>')
     if len(dev["ips"]) > 1:
-        badges.append(f'<span class="badge warn" title="Один MAC — несколько IP">{len(dev["ips"])} IP</span>')
-    chg_badges, chg_line = _card_changes(dev, changes)
-    badges.append(chg_badges)
+        out.append(f'<span class="pc warn" title="Один MAC — несколько IP">{len(dev["ips"])} IP</span>')
+    return "".join(out)
 
-    facts = []
-    facts.append(f'<div><span>IP</span><b>{e(", ".join(dev["ips"]) or "—")}</b></div>')
-    facts.append(f'<div><span>MAC</span><b class="mono">{e(dev["mac"] or "не получен")}</b></div>')
-    for key in ("vendor", "model", "firmware", "os"):
-        if ident.get(key):
-            facts.append(f'<div><span>{FIELD_NAMES[key]}</span><b>{e(ident[key])}</b></div>')
+
+def _detail(dev: dict) -> str:
+    ident, reg, r = dev["identity"], dev.get("registry") or {}, dev.get("router") or {}
+    facts = [("IP", ", ".join(dev["ips"]) or "—"), ("MAC", dev["mac"] or "не получен")]
+    facts += [(FIELD_NAMES[k], ident[k]) for k in ("vendor", "model", "firmware", "os") if ident.get(k)]
     if r:
-        facts.append(f'<div><span>Подключение</span><b>{e(connection_text(r).removeprefix("Роутер: "))}</b></div>')
+        facts.append(("Подключение", connection_text(r).removeprefix("Роутер: ")))
         if r.get("hostname") and r.get("hostname") != dev["title"]:
-            facts.append(f'<div><span>DHCP-имя</span><b>{e(r["hostname"])}</b></div>')
-    for key in ("place", "owner", "purpose"):
-        if reg.get(key):
-            label = {"place": "Место", "owner": "Владелец", "purpose": "Назначение"}[key]
-            facts.append(f'<div><span>{label}</span><b>{e(reg[key])}</b></div>')
-
-    ports = "".join(
-        f'<span class="port" title="{e(s.get("http", {}).get("title") or s.get("banner") or "")}">'
-        f'{s["port"]}{(" · " + e(s["name"])) if s.get("name") else ""}</span>'
-        for s in dev["services"])
-    ports_html = f'<div class="ports">{ports}</div>' if ports else '<div class="ports none">открытых TCP-портов не найдено</div>'
+            facts.append(("DHCP-имя", r["hostname"]))
+    facts += [(label, reg[k]) for k, label in (("place", "Место"), ("owner", "Владелец"), ("purpose", "Назначение"))
+              if reg.get(k)]
+    facts_html = "".join(f'<span>{e(k)}</span><b class="{"mono" if k == "MAC" else ""}">{e(v)}</b>' for k, v in facts)
+    ports = "".join(_port_chip(s, full=True) for s in dev["services"]) or '<span class="muted">открытых TCP-портов нет</span>'
 
     acts = []
     for a in dev["actions"]:
+        danger = " danger" if "⚠" in a["label"] else ""
         if a["kind"] == "link":
-            acts.append(f'<a class="act" href="{e(a["url"])}" target="_blank" rel="noopener" title="{e(a.get("hint", ""))}">{e(a["label"])}</a>')
+            acts.append(f'<a class="act{danger}" href="{e(a["url"])}" target="_blank" rel="noopener" title="{e(a.get("hint", ""))}">'
+                        f'{icon("open", "s")}<span class="lbl">{e(a["label"])}</span></a>')
         else:
-            acts.append(f'<button class="act copy" data-copy="{e(a["value"])}" title="{e(a.get("hint", "") or a["value"])}">{e(a["label"])}</button>')
+            acts.append(f'<button class="act{danger}" data-copy="{e(a["value"])}" title="{e(a.get("hint", "") or a["value"])}">'
+                        f'{icon("copy", "s")}<span class="lbl">{e(a["label"])}</span></button>')
 
     chosen = "".join(
         f'<li><b>{FIELD_NAMES.get(k, k)}:</b> {e(v["value"] if k != "type" else ident["type_label"])} '
@@ -114,225 +180,287 @@ def _card(dev: dict, changes: dict | None = None) -> str:
         f'{(" <span class=src>(" + e(x["ip"]) + ")</span>") if x.get("ip") and len(dev["ips"]) > 1 else ""}</li>'
         for x in dev["evidence"])
     problems = "".join(f'<li class="conflict">⚠ {e(c)}</li>' for c in ident["conflicts"])
-    problems += "".join(f'<li class="note">ℹ {e(n)}</li>' for n in ident["notes"])
+    problems += "".join(f'<li>ℹ {e(n)}</li>' for n in ident["notes"])
     if reg.get("notes"):
-        problems += f'<li class="note">📝 {e(reg["notes"])}</li>'
-    why = (f'<details><summary>Почему так ({len(dev["evidence"])} улик)</summary>'
-           f'<h4>Вывод</h4><ul class="chosen">{chosen or "<li>ничего не известно</li>"}</ul>'
-           f'{"<ul class=problems>" + problems + "</ul>" if problems else ""}'
-           f'<h4>Улики</h4><ul class="evidence">{evidence or "<li>улик нет</li>"}</ul>'
-           f'<p class="src">Сработавшие правила: {e(", ".join(ident["rules"]) or "нет")}</p></details>')
+        problems += f'<li>📝 {e(reg["notes"])}</li>'
+    why = (f'<details class="why"><summary>Почему так: {e(LEVEL_NAMES[min(ident["confidence"], 4)])}, '
+           f'{len(dev["evidence"])} улик</summary>'
+           f'<h4>Вывод</h4><ul>{chosen or "<li>ничего не известно</li>"}</ul>'
+           f'{"<h4>Внимание</h4><ul>" + problems + "</ul>" if problems else ""}'
+           f'<h4>Улики</h4><ul>{evidence or "<li>улик нет</li>"}</ul>'
+           f'<p class="src">Правила: {e(", ".join(ident["rules"]) or "нет")}</p></details>')
+    return (f'<div class="tdetail" hidden><div class="dgrid"><div class="facts">{facts_html}</div>'
+            f'<div class="ports">{ports}</div></div><div class="acts">{"".join(acts)}</div>{why}</div>')
+
+
+def _tile(dev: dict, changes: dict | None) -> str:
+    ident = dev["identity"]
+    conf = ident["confidence"]
+    items = ((changes or {}).get("by_key") or {}).get(dev["key"]) or []
+    risky = any(s["port"] in RISKY_PORTS for s in dev["services"])
+    status = "on" if dev["alive"] else "off"
+    dot_label = "в сети" if dev["alive"] else "не отвечало"
+
+    ports = dev["services"]
+    shown = sorted(ports, key=lambda s: (s["port"] not in RISKY_PORTS, s["port"]))[:MAX_TILE_PORTS]
+    port_chips = "".join(_port_chip(s) for s in shown)
+    if len(ports) > MAX_TILE_PORTS:
+        port_chips += f'<span class="pc" title="ещё портов">+{len(ports) - MAX_TILE_PORTS}</span>'
+    chg = "".join(change_chip(x) for x in items)
+    marks = (f'{chg}{port_chips}{_flags(dev)}')
 
     search = " ".join([dev["title"], dev["subtitle"], " ".join(dev["ips"]), dev["mac"] or "", ident["type_label"],
                        ident.get("vendor") or "", ident.get("model") or "",
                        " ".join(str(s["port"]) + " " + (s.get("name") or "") for s in dev["services"])]).lower()
-    return (f'<article class="card" data-group="{e(ident["group"])}" data-conf="{conf}" data-search="{e(search)}"'
-            f' data-changed="{1 if chg_line else 0}">'
-            f'<header><h3>{e(dev["title"])}</h3><p class="sub">{e(dev["subtitle"])}</p>'
-            f'<div class="badges">{"".join(badges)}</div>{chg_line}</header>'
-            f'<div class="facts">{"".join(facts)}</div>{ports_html}'
-            f'<div class="actions">{"".join(acts)}</div>{why}</article>')
+    cls = " ".join(x for x in ("tile", "off" if not dev["alive"] else "", "changed" if items else "",
+                               "risky" if risky else "") if x)
+    ip = ", ".join(dev["ips"]) or (dev["mac"] or "")
+    return (f'<article class="{cls}" id="d-{e(dev["key"])}" data-group="{e(ident["group"])}" data-status="{status}" '
+            f'data-conf="{conf}" data-changed="{1 if items else 0}" data-search="{e(search)}">'
+            f'<button class="thead" aria-expanded="false">'
+            f'<span class="ticon">{icon(type_icon(ident["type"]), "", ident["type_label"])}'
+            f'<i class="dot {"" if dev["alive"] else "off"}" title="{dot_label}"></i></span>'
+            f'<span class="tmain"><b>{e(dev["title"])}</b>'
+            f'{"<span class=sub>" + e(dev["subtitle"]) + "</span>" if dev["subtitle"] else ""}'
+            f'<span class="ip mono">{e(ip)}</span></span>'
+            f'<span class="tside">{_meter(conf)}{_connection(dev.get("router") or {})}</span>'
+            f'<span class="tmarks">{marks}</span></button>'
+            f'{_detail(dev)}</article>')
 
 
-def _forwards(model: dict, devs: list[dict]) -> str:
-    router = model.get("router")
-    if not router:
-        reason = model.get("router_skipped")
-        return f'<p class="meta">Данные роутера недоступны{": " + e(reason) if reason else ""}.</p>' if reason else ""
-    head = (f'<p class="meta">Роутер {e(router.get("model") or "")}, прошивка {e(router.get("firmware") or "?")}: '
-            f'клиентов в списке {len(router["clients"])}, сейчас в сети {sum(1 for c in router["clients"] if c.get("active"))}.</p>')
-    fw = router.get("forwards") or []
-    if not fw:
-        return head + '<p class="meta">Пробросов портов из интернета внутрь сети нет.</p>'
-    by_ip = {ip: d for d in devs for ip in d["ips"]}
-    rows = "".join(
-        f'<tr><td>{e(f["kind"].upper())}</td><td>{e(f.get("protocol") or "")} {e(f.get("port") or "")}</td>'
-        f'<td>{e(by_ip[f["to_ip"]]["title"]) if f.get("to_ip") in by_ip else ""} ({e(f.get("to_ip") or "?")}:{e(f.get("to_port") or "")})</td>'
-        f'<td>{e(f.get("description") or "")}</td></tr>' for f in fw)
-    return (head + f'<div class="forwards"><h3>⚠ Открыто из интернета внутрь сети: {len(fw)}</h3>'
-            '<p class="meta">Каждый такой проброс — дверь снаружи. Оставь только осознанные (например, VPN).</p>'
-            f'<table><tr><th>Вид</th><th>Порт снаружи</th><th>Куда ведёт</th><th>Описание</th></tr>{rows}</table></div>')
+# --- панели ----------------------------------------------------------------------------------
+
+def _who(d: dict, present: set[str]) -> str:
+    """Имя устройства с иконкой; если оно есть в этом срезе — кнопка перехода к плитке."""
+    inner = f'{icon(type_icon(d.get("type")), "s")}{e(d["title"])}'
+    if d["key"] in present:
+        return f'<button class="who" data-goto="{e(d["key"])}" title="Показать плитку">{inner}</button>'
+    return f'<span class="who">{inner}</span>'
 
 
-def _fw_text(f: dict) -> str:
-    return (f'{(f.get("kind") or "").upper()} {f.get("protocol") or ""} {f.get("port") or ""} → '
-            f'{f.get("to_ip") or "?"}:{f.get("to_port") or ""}' + (f' ({f["description"]})' if f.get("description") else ""))
-
-
-def _dev_line(d: dict) -> str:
-    sub = f' <span class="src">{e(d["subtitle"])}</span>' if d.get("subtitle") else ""
-    return f'<li>{e(d["title"])} <span class="src">({e(", ".join(d["ips"]) or d.get("mac") or "")})</span>{sub}</li>'
+def _fw_row(f: dict, by_ip: dict, present: set[str], chip: str = "") -> str:
+    dev = by_ip.get(f.get("to_ip"))
+    target = (_who({"key": dev["key"], "title": dev["title"], "type": dev["identity"]["type"]}, present)
+              if dev else f'<span class="who">{icon("unknown", "s")}{e(f.get("to_ip") or "?")}</span>')
+    proto = (f.get("protocol") or "").upper()
+    kind = (f.get("kind") or "").upper()
+    return (f'<div class="door">{chip}<span class="src" title="{e(kind)}: порт снаружи">{icon("globe")}'
+            f'{e(proto)} {e(f.get("port") or "")}</span><span class="arr">{icon("arrow")}</span>{target}'
+            f'<span class="mono muted">{e(f.get("to_ip") or "")}:{e(f.get("to_port") or "")}</span>'
+            f'{"<span class=desc>" + e(f["description"]) + "</span>" if f.get("description") else ""}</div>')
 
 
 def _changes(model: dict) -> str:
-    """Блок «Что изменилось с прошлого среза»."""
+    """Панель «Что изменилось с прошлого среза»."""
     c = model.get("changes")
     if not c:
         return ""
     if c.get("error"):
-        return f'<p class="warning">{e(c["error"])}</p>'
+        return f'<div class="note">{icon("alert", "s")}{e(c["error"])}</div>'
+    devs = model["devices"]
+    present = {d["key"] for d in devs}
+    by_ip = {ip: d for d in devs for ip in d["ips"]}
     when = (c.get("baseline_started") or "")[:16].replace("T", " ") or c.get("baseline")
-    head = f'<h3>Что изменилось с прошлого среза <span class="src">({e(when)})</span></h3>'
-    notes = "".join(f'<p class="meta">ℹ {e(n)}</p>' for n in c.get("notes") or [])
+    p = c.get("private") or {}
+
+    def cnt(n: int, cls: str, ico: str, label: str) -> str:
+        return (f'<span class="cnt {cls}{" zero" if not n else ""}" title="{e(label)}" aria-label="{e(label)}: {n}">'
+                f'{icon(ico, "s")}{n}</span>')
+
+    counters = (cnt(len(c["new"]), "add", "plus", "Новые устройства") + cnt(len(c["gone"]), "del", "minus", "Пропали")
+                + cnt(len(c["changed"]), "", "delta", "Изменились")
+                + cnt(len(c["online"]), "", "arrow", "Снова в сети"))
+    if c["forwards_added"]:
+        counters += cnt(len(c["forwards_added"]), "crit", "globe", "Новые пробросы из интернета")
+    head = (f'<summary><h2>{icon("delta")}Изменения</h2><span class="muted">с {e(when)}</span>'
+            f'<span class="counters">{counters}</span>{icon("chevron", "chev")}</summary>')
+    notes = "".join(f'<div class="note">{icon("info", "s")}<span>{e(n)}</span></div>' for n in c.get("notes") or [])
     if not c.get("total"):
-        return f'<div class="changes">{head}<p class="meta">Ничего заметного не изменилось.</p>{notes}</div>'
+        return (f'<details class="panel" id="changes">{head}<div class="panel-body">'
+                f'<div class="note">{icon("check", "s")}Ничего заметного не изменилось.</div>{notes}</div></details>')
 
     parts = []
 
-    def group(title: str, rows: list[str], cls: str = "") -> None:
+    def group(title: str, rows: list[str]) -> None:
         if rows:
-            parts.append(f'<div class="chg-group {cls}"><h4>{e(title)} <span class="count">{len(rows)}</span></h4>'
-                         f'<ul>{"".join(rows)}</ul></div>')
+            parts.append(f'<div class="cgroup"><h3>{e(title)}</h3>{"".join(rows)}</div>')
 
-    group("⚠ Новые пробросы из интернета", [f'<li>{e(_fw_text(f))}</li>' for f in c["forwards_added"]], "bad")
-    group("Новые устройства", [_dev_line(d) for d in c["new"]], "bad")
-    group("Изменения на устройствах",
-          [f'<li>{e(d["title"])} <span class="src">({e(", ".join(d["ips"]))})</span><ul>'
-           + "".join(f'<li>{e(x["text"])}</li>' for x in d["items"]) + "</ul></li>" for d in c["changed"]])
-    group("Пропали", [_dev_line(d) for d in c["gone"]])
-    group("Закрытые пробросы", [f'<li>{e(_fw_text(f))}</li>' for f in c["forwards_removed"]], "good")
-    group("Роутер", [f'<li>{e(t)}</li>' for t in c["router"]])
-    group("Вышли из сети (роутер их помнит)" if c.get("has_router") else "Не ответили в этот раз",
-          [_dev_line(d) for d in c["offline"]])
-    group("Снова в сети", [_dev_line(d) for d in c["online"]])
-    p = c.get("private") or {}
+    def row(d: dict, chips: str, cls: str = "") -> str:
+        ip = f'<span class="ip mono">{e(", ".join(d["ips"]))}</span>' if d.get("ips") else ""
+        return f'<div class="crow {cls}">{_who(d, present)}{ip}{chips}</div>'
+
+    group("Новые пробросы из интернета",
+          [_fw_row(f, by_ip, present, f'<span class="pc crit">{icon("plus", "s")}</span>') for f in c["forwards_added"]])
+    group("Новые устройства", [row(d, change_chip({"what": "new", "text": "в прошлом срезе этого устройства не было"}))
+                               for d in c["new"]])
+    group("Изменились", [row(d, "".join(change_chip(x) for x in d["items"])) for d in c["changed"]])
+    group("Пропали", [row(d, change_chip({"what": "gone", "text": "в этом срезе устройства нет"}), "gone") for d in c["gone"]])
+    group("Закрытые пробросы",
+          [_fw_row(f, by_ip, present, f'<span class="pc del">{icon("minus", "s")}</span>') for f in c["forwards_removed"]])
+    group("Роутер", [f'<div class="crow">{icon("router", "s")}<span>{e(t)}</span></div>' for t in c["router"]])
+    offline_title = "Вышли из сети (роутер их помнит)" if c.get("has_router") else "Не ответили в этот раз"
+    group(offline_title, [row(d, change_chip({"what": "offline", "text": "в прошлый раз отвечало, сейчас нет"}))
+                          for d in c["offline"]])
+    group("Снова в сети", [row(d, change_chip({"what": "online", "text": "в прошлый раз не отвечало, сейчас в сети"}))
+                           for d in c["online"]])
     if p.get("new") or p.get("gone"):
-        parts.append(f'<p class="meta">Устройства со случайным (частным) MAC: появилось {p.get("new", 0)}, '
-                     f'пропало {p.get("gone", 0)}. Телефоны меняют такой MAC, поэтому поштучно они не сравниваются.</p>')
-    return f'<div class="changes">{head}{notes}{"".join(parts)}</div>'
+        parts.append(f'<div class="note">{icon("shuffle", "s")}<span>Случайный MAC: '
+                     f'+{p.get("new", 0)} / −{p.get("gone", 0)}. Телефоны меняют такой MAC, поштучно не сравниваются.</span></div>')
+    return (f'<details class="panel" id="changes" open>{head}<div class="panel-body">{notes}{"".join(parts)}</div></details>')
+
+
+def _forwards(model: dict) -> str:
+    router = model.get("router")
+    fw = (router or {}).get("forwards") or []
+    if not fw:
+        return ""
+    devs = model["devices"]
+    present = {d["key"] for d in devs}
+    by_ip = {ip: d for d in devs for ip in d["ips"]}
+    rows = "".join(_fw_row(f, by_ip, present) for f in fw)
+    return (f'<details class="panel crit" id="doors" open><summary><h2>{icon("globe")}Открыто из интернета: {len(fw)}</h2>'
+            f'<span class="muted">каждый проброс — дверь снаружи; оставь только осознанные (например, VPN)</span>'
+            f'{icon("chevron", "chev")}</summary><div class="panel-body">{rows}</div></details>')
+
+
+def _pills(model: dict) -> str:
+    meta, router = model["meta"], model.get("router")
+    pills = []
+
+    def pill(ico: str, short: str, text: str, cls: str = "") -> None:
+        pills.append(f'<details class="pill {cls}"><summary>{icon(ico, "s")}{e(short)}</summary><div>{e(text)}</div></details>')
+
+    if router:
+        clients = router["clients"]
+        pill("router", f'{router.get("model") or "роутер"} · {router.get("firmware") or "?"}',
+             f'Роутер {router.get("model") or ""}, прошивка {router.get("firmware") or "?"}: клиентов в списке '
+             f'{len(clients)}, сейчас в сети {sum(1 for c in clients if c.get("active"))}. Данные только читаются.')
+    elif model.get("router_skipped"):
+        pill("router", "роутер недоступен", f'Данные роутера недоступны: {model["router_skipped"]}', "warn")
+    if not meta.get("admin"):
+        pill("alert", "без админа", "Срез сделан без прав администратора. Часть будущих проверок "
+             "(параметры SMB этого компьютера, DISM) будет недоступна.", "warn")
+    if not model.get("oui_available"):
+        pill("alert", "нет базы IEEE", "Нет базы производителей IEEE (data/oui.txt): производитель по MAC не определяется. "
+             "Команда: python -m lanmap oui update", "warn")
+    stages = meta.get("stages") or []
+    duration = f'{stages[-1]["at_s"]:.0f} с' if stages else "?"
+    pill("info", "о срезе", f'Интерфейс «{(meta.get("interface") or {}).get("alias", "?")}», компьютер '
+         f'{meta.get("hostname", "?")}, проверено портов: {meta.get("ports_tested", "?")}, длительность {duration}. '
+         "Программа только читает сеть и ничего не меняет на устройствах.")
+    return f'<div class="pills">{"".join(pills)}</div>'
+
+
+def _kpis(model: dict) -> str:
+    devs = model["devices"]
+    alive = [d for d in devs if d["alive"]]
+    sure = sum(1 for d in alive if d["identity"]["confidence"] >= 3)
+    share = sure / len(alive) if alive else 0
+    circ = 2 * 3.14159 * 15
+    ring = (f'<svg class="ring" viewBox="0 0 38 38" aria-hidden="true"><circle class="bg" cx="19" cy="19" r="15"/>'
+            f'<circle class="fg" cx="19" cy="19" r="15" stroke-dasharray="{circ * share:.1f} {circ:.1f}"/></svg>')
+    signed = sum(1 for d in devs if (d.get("registry") or {}).get("confirmed"))
+    tiles = [
+        f'<button class="kpi" data-kpi="all"><span class="ico">{icon("devices")}</span><span><b>{len(devs)}</b>'
+        f'<span class="l">устройств</span></span></button>',
+        f'<button class="kpi" data-kpi="online"><span class="ico"><i class="dot"></i></span><span><b>{len(alive)}</b>'
+        f'<span class="l">в сети</span></span></button>',
+        f'<div class="kpi" title="Опознаны с высокой уверенностью среди отвечавших">{ring}<span><b>{sure}</b>'
+        f'<span class="l">опознаны из {len(alive)}</span></span></div>',
+        f'<div class="kpi"><span class="ico">{icon("check")}</span><span><b>{signed}</b><span class="l">подписаны</span></span></div>',
+    ]
+    c = model.get("changes")
+    if c and not c.get("error"):
+        tiles.append(f'<button class="kpi add" data-kpi="changes"><span class="ico">{icon("delta")}</span>'
+                     f'<span><b>{c.get("total", 0)}</b><span class="l">изменений</span></span></button>')
+    fw = ((model.get("router") or {}).get("forwards") or [])
+    if model.get("router"):
+        tiles.append(f'<button class="kpi {"crit" if fw else ""}" data-kpi="doors"><span class="ico">{icon("globe")}</span>'
+                     f'<span><b>{len(fw)}</b><span class="l">дверей из интернета</span></span></button>')
+    return f'<div class="kpis">{"".join(tiles)}</div>'
+
+
+def _legend() -> str:
+    rows = [
+        ('<i class="dot"></i>', "в сети"), ('<i class="dot off"></i>', "не отвечало"),
+        (_meter(3), "уверенность опознания (4 деления — точно)"),
+        (icon("wifi3", "s") + icon("wifi1", "s"), "Wi-Fi: сильный / слабый сигнал"), (icon("cable", "s"), "кабель"),
+        ('<span class="pc add">+80</span>', "порт открылся с прошлого среза"),
+        (f'<span class="pc del">{icon("minus", "s")}<s>80</s></span>', "порт закрылся"),
+        (f'<span class="pc crit">{icon("alert", "s")}23</span>', "опасный порт (Telnet, ADB)"),
+        (f'<span class="pc trans">IP <s>·10</s>{icon("arrow", "s")}<span class="to">·20</span></span>', "сменился адрес"),
+        (f'<span class="pc warn">{icon("barcode", "s")}≠</span>', "по адресу отвечает другой серийник"),
+        (icon("check", "s"), "подписано владельцем"), (icon("user", "s"), "этот компьютер"),
+        (icon("shuffle", "s"), "частный (случайный) MAC"), (icon("link", "s"), "общий MAC: мост или ретранслятор"),
+    ]
+    cells = "".join(f'<div>{a}<span>{e(b)}</span></div>' for a, b in rows)
+    return (f'<details class="panel" id="legend"><summary><h2>{icon("question")}Что значат значки</h2>'
+            f'{icon("chevron", "chev")}</summary><div class="panel-body legend">{cells}</div></details>')
 
 
 def render(model: dict) -> str:
     meta = model["meta"]
     iface = meta.get("interface", {})
     devs = model["devices"]
-    alive = [d for d in devs if d["alive"]]
-    conf = Counter(min(d["identity"]["confidence"], 4) for d in alive)
-    groups = []
+    changes = model.get("changes")
+    groups: list[str] = []
     for d in devs:
         if d["identity"]["group"] not in groups:
             groups.append(d["identity"]["group"])
+    count = Counter(d["identity"]["group"] for d in devs)
 
-    warnings = []
-    if not meta.get("admin"):
-        warnings.append("Срез сделан без прав администратора. Для этапа 0 это почти ничего не меняет, "
-                        "но часть будущих проверок (параметры SMB этого компьютера, DISM) будет недоступна.")
-    if not model.get("oui_available"):
-        warnings.append("Нет базы производителей IEEE (data/oui.txt): производитель по MAC не определяется. "
-                        "Команда: python -m lanmap oui update")
-    if model.get("registry_drafts"):
-        warnings.append(f"В реестре {model['registry_drafts']} черновиков из среза Codex — это предложения, а не факты. "
-                        "Подписывать не обязательно сейчас: позже это можно будет сделать кнопкой в интерфейсе.")
-
-    forwards_html = _forwards(model, devs)
-    changes_html = _changes(model)
-    has_changes = any(((model.get("changes") or {}).get("by_key") or {}).get(d["key"]) for d in devs)
-
+    gfilters = "".join(
+        f'<button class="gf" data-group="{e(g)}" title="{e(g)}">{icon(GROUP_ICONS.get(g, "unknown"), "s")}'
+        f'{e(GROUP_SHORT.get(g, g))}<small>{count[g]}</small></button>' for g in groups)
     sections = []
     for g in groups:
-        cards = "".join(_card(d, model.get("changes")) for d in devs if d["identity"]["group"] == g)
-        n = sum(1 for d in devs if d["identity"]["group"] == g)
-        sections.append(f'<section data-section="{e(g)}"><h2>{e(g)} <span class="count">{n}</span></h2>'
-                        f'<div class="grid">{cards}</div></section>')
-
-    chips = "".join(f'<button class="chip" data-filter-group="{e(g)}">{e(g)}</button>' for g in groups)
-    summary = " · ".join(f'{LEVEL_NAMES[k]}: {conf.get(k, 0)}' for k in (4, 3, 2, 1, 0) if conf.get(k))
-    stages = meta.get("stages") or []
-    duration = f'{stages[-1]["at_s"]:.0f} с' if stages else "?"
-    signed = sum(1 for d in devs if (d.get("registry") or {}).get("confirmed"))
+        tiles = "".join(_tile(d, changes) for d in devs if d["identity"]["group"] == g)
+        is_open = "" if g == OFFLINE_GROUP else " open"
+        sections.append(f'<details class="group"{is_open}><summary>{icon("chevron", "s chev")}'
+                        f'{icon(GROUP_ICONS.get(g, "unknown"))}{e(g)} <span class="n">{count[g]}</span></summary>'
+                        f'<div class="grid">{tiles}</div></details>')
+    has_changes = any(((changes or {}).get("by_key") or {}).get(d["key"]) for d in devs)
+    changed_btn = (f'<button class="iconbtn" id="f-changed" title="Только изменившиеся">{icon("delta", "s")}</button>'
+                   if has_changes else "")
+    started = meta.get("started", "")[:16].replace("T", " ")
 
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LanMap — срез {e(model['snapshot'])}</title>
 <style>{CSS}</style></head><body>
-<header class="top">
-  <h1>Срез сети {e(iface.get('network', '?'))}</h1>
-  <p class="meta">{e(meta.get('started', '')[:16].replace('T', ' '))} · интерфейс «{e(iface.get('alias', '?'))}» · компьютер {e(meta.get('hostname', '?'))}
-  · проверено портов: {e(meta.get('ports_tested', '?'))} · длительность {e(duration)}</p>
-  <div class="kpis">
-    <div><b>{len(devs)}</b><span>устройств</span></div>
-    <div><b>{len(alive)}</b><span>отвечали</span></div>
-    <div><b>{conf.get(4, 0) + conf.get(3, 0)}</b><span>опознаны уверенно</span></div>
-    <div><b>{signed}</b><span>подписаны владельцем</span></div>
+{ICONS}
+<div class="wrap">
+<header>
+  <div class="top">
+    <h1>{icon("devices", "l")}Сеть {e(iface.get('network', '?'))}</h1>
+    <span class="when">{e(started)}</span>
+    <span class="spacer"></span>
+    <button class="iconbtn" id="theme" title="Светлая / тёмная тема">{icon("sun", "s")}{icon("moon", "s")}</button>
   </div>
-  <p class="meta">Уверенность у отвечавших: {e(summary)}</p>
-  {''.join(f'<p class="warning">{e(w)}</p>' for w in warnings)}
-  {changes_html}
-  {forwards_html}
-  <div class="filters">
-    <input id="q" type="search" placeholder="Поиск: IP, MAC, имя, порт, производитель…" autocomplete="off">
-    <button class="chip active" data-filter-group="">Все</button>{chips}
-    <label class="lowconf"><input type="checkbox" id="low"> только неуверенные</label>
-    {'<label class="lowconf"><input type="checkbox" id="chg"> только изменившиеся</label>' if has_changes else ''}
-  </div>
+  {_pills(model)}
+  {_kpis(model)}
 </header>
-<main>{''.join(sections)}</main>
-<footer>LanMap {e(meta.get('lanmap_version', ''))} · программа только читает сеть и ничего не меняет на устройствах · отчёт содержит личные данные сети, не публикуй его</footer>
+{_forwards(model)}
+{_changes(model)}
+<div class="bar">
+  <label class="search">{icon("search", "s")}<input id="q" type="search" placeholder="IP, MAC, имя, порт…" autocomplete="off"></label>
+  <span class="seg" role="group" aria-label="Состояние">
+    <button data-status="" title="Все">все</button>
+    <button data-status="on" title="В сети"><i class="dot"></i></button>
+    <button data-status="off" title="Не отвечали"><i class="dot off"></i></button>
+  </span>
+  {changed_btn}
+  <button class="iconbtn" id="f-low" title="Только неуверенно опознанные">{icon("question", "s")}</button>
+  <span class="seg" role="group" aria-label="Вид">
+    <button data-view="tiles" title="Плитки">{icon("grid", "s")}</button>
+    <button data-view="list" title="Список">{icon("list", "s")}</button>
+  </span>
+  <button class="iconbtn" id="expand" title="Развернуть / свернуть все">{icon("expand", "s")}</button>
+  <div class="gfilters">{gfilters}</div>
+</div>
+<main>{''.join(sections)}<p id="empty" class="note hidden">{icon("search", "s")}Ничего не найдено.</p></main>
+{_legend()}
+<footer>LanMap {e(meta.get('lanmap_version', ''))} · только чтение сети · отчёт содержит личные данные, не публикуй его</footer>
+</div>
 <script>{JS}</script>
 </body></html>"""
-
-
-CSS = """
-:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#667085;--line:#e3e6eb;--accent:#2f6fde;
---c4:#1a7f37;--c3:#2f6fde;--c2:#b26b00;--c1:#b54708;--c0:#8a8f98;--warnbg:#fff4e5;--chip:#eef1f5}
-@media (prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d2128;--fg:#e6e8eb;--muted:#9aa3ae;--line:#2c323b;
---accent:#6b9cf0;--c4:#4ac26b;--c3:#6b9cf0;--c2:#e0a03a;--c1:#f08a4b;--c0:#8a8f98;--warnbg:#3a2c16;--chip:#262b33}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,"Segoe UI",sans-serif}
-.top{padding:20px 24px 8px;max-width:1400px;margin:auto}h1{margin:0 0 4px;font-size:22px}
-.meta{color:var(--muted);margin:2px 0}.kpis{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}
-.kpis div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 14px;min-width:120px}
-.kpis b{display:block;font-size:22px}.kpis span{color:var(--muted);font-size:12px}
-.warning{background:var(--warnbg);border-radius:8px;padding:8px 12px;margin:6px 0}
-.filters{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:12px 0 4px}
-#q{flex:1 1 280px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
-.chip{border:1px solid var(--line);background:var(--chip);color:var(--fg);border-radius:999px;padding:5px 11px;cursor:pointer}
-.chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}.lowconf{color:var(--muted);margin-left:6px}
-main{max-width:1400px;margin:auto;padding:0 24px 24px}h2{font-size:17px;margin:22px 0 10px}.count{color:var(--muted);font-weight:400}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
-.card h3{margin:0;font-size:16px;word-break:break-word}.sub{margin:2px 0 0;color:var(--muted);word-break:break-word}
-.badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
-.badge{font-size:11px;border-radius:6px;padding:2px 7px;background:var(--chip);color:var(--fg)}
-.badge.c4{background:var(--c4);color:#fff}.badge.c3{background:var(--c3);color:#fff}.badge.c2{background:var(--c2);color:#fff}
-.badge.c1{background:var(--c1);color:#fff}.badge.c0{background:var(--c0);color:#fff}
-.badge.ok{background:var(--c4);color:#fff}.badge.draft{border:1px dashed var(--c2);background:transparent}
-.badge.warn{border:1px solid var(--c2);background:transparent}.badge.info{border:1px solid var(--accent);background:transparent}
-.badge.muted{color:var(--muted)}
-.facts{display:grid;grid-template-columns:max-content 1fr;gap:2px 10px}.facts div{display:contents}
-.facts span{color:var(--muted)}.facts b{font-weight:500;word-break:break-all}.mono{font-family:ui-monospace,Consolas,monospace}
-.ports{display:flex;flex-wrap:wrap;gap:4px}.ports.none{color:var(--muted);font-size:12px}
-.port{font-size:12px;background:var(--chip);border-radius:6px;padding:1px 6px;font-family:ui-monospace,Consolas,monospace}
-.actions{display:flex;flex-wrap:wrap;gap:6px}
-.act{font-size:12px;border:1px solid var(--accent);color:var(--accent);background:transparent;border-radius:6px;padding:3px 8px;
-text-decoration:none;cursor:pointer}.act:hover{background:var(--accent);color:#fff}
-details summary{cursor:pointer;color:var(--accent)}details h4{margin:8px 0 4px;font-size:13px}
-details ul{margin:0;padding-left:18px}details li{margin:2px 0}.src{color:var(--muted);font-size:12px}
-.tag{font-size:11px;background:var(--chip);border-radius:4px;padding:0 5px}
-.problems{list-style:none;padding:0!important;margin:6px 0!important}.conflict{color:var(--c1)}.note{color:var(--muted)}
-.forwards{background:var(--warnbg);border-radius:8px;padding:8px 12px;margin:8px 0;overflow-x:auto}
-.forwards h3{margin:0 0 4px;font-size:15px}.forwards table{border-collapse:collapse;font-size:13px}
-.forwards td,.forwards th{text-align:left;padding:3px 10px 3px 0;vertical-align:top}
-.changes{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:8px 0}
-.changes h3{margin:0 0 4px;font-size:15px}.chg-group h4{margin:8px 0 2px;font-size:13px}
-.chg-group ul{margin:0;padding-left:18px}.chg-group li{margin:2px 0}.chg-group.bad h4{color:var(--c1)}.chg-group.good h4{color:var(--c4)}
-.badge.chg-new{background:var(--c1);color:#fff}.badge.chg-bad{border:1px solid var(--c1);color:var(--c1);background:transparent}
-.badge.chg{border:1px dashed var(--accent);background:transparent}
-.chg-line{margin:6px 0 0;font-size:12px;color:var(--c2)}
-footer{color:var(--muted);text-align:center;padding:20px;font-size:12px}
-.hidden{display:none!important}
-@media (max-width:480px){.top,main{padding-left:12px;padding-right:12px}.grid{grid-template-columns:1fr}}
-"""
-
-JS = """
-const q=document.getElementById('q'),low=document.getElementById('low'),chg=document.getElementById('chg');let group='';
-function apply(){const t=q.value.trim().toLowerCase();
- document.querySelectorAll('.card').forEach(c=>{const ok=(!group||c.dataset.group===group)&&(!t||c.dataset.search.includes(t))
-  &&(!low.checked||+c.dataset.conf<3)&&(!chg||!chg.checked||c.dataset.changed==='1');c.classList.toggle('hidden',!ok)});
- document.querySelectorAll('section').forEach(s=>s.classList.toggle('hidden',!s.querySelector('.card:not(.hidden)')));}
-q.addEventListener('input',apply);low.addEventListener('change',apply);if(chg)chg.addEventListener('change',apply);
-document.querySelectorAll('[data-filter-group]').forEach(b=>b.addEventListener('click',()=>{group=b.dataset.filterGroup;
- document.querySelectorAll('[data-filter-group]').forEach(x=>x.classList.toggle('active',x===b));apply();}));
-document.querySelectorAll('.copy').forEach(b=>b.addEventListener('click',async()=>{const v=b.dataset.copy;
- try{await navigator.clipboard.writeText(v)}catch(e){const a=document.createElement('textarea');a.value=v;document.body.appendChild(a);
- a.select();document.execCommand('copy');a.remove()}const old=b.textContent;b.textContent='Скопировано';setTimeout(()=>b.textContent=old,1200);}));
-"""
