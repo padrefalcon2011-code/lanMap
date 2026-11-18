@@ -18,6 +18,7 @@ from pathlib import Path
 from lanmap.util import read_json
 
 _SNAP_RE = re.compile(r"\d{4}-\d\d-\d\d_")
+MOBILE_TYPES = {"phone", "wearable"}
 
 
 def previous_snapshot(snapshot: Path) -> Path | None:
@@ -143,8 +144,10 @@ def _device_changes(old: dict, new: dict, tested_old: set[int] | None, tested_ne
                 continue
             items.append({"what": "port_open", "short": f"+{port}", "port": port,
                           "text": f"открыт порт {_port_text(new_ports[port])}"})
+        # Телефоны и часы закрывают порты при блокировке экрана — закрытие у них не новость (открытие — новость)
+        mobile = new.get("private_mac") or new["identity"].get("type") in MOBILE_TYPES
         for port in sorted(set(old_ports) - set(new_ports)):
-            if tested_new is not None and port not in tested_new:
+            if mobile or (tested_new is not None and port not in tested_new):
                 continue
             items.append({"what": "port_closed", "short": f"−{port}", "port": port,
                           "text": f"закрыт порт {_port_text(old_ports[port])}"})
@@ -169,6 +172,7 @@ def compare(old: dict, new: dict, tested_old: set[int] | None = None, tested_new
         "first_seen_router": {"devices": 0, "forwards": 0},
         "forwards_added": [], "forwards_removed": [],
         "router": [], "notes": [],
+        "has_router": bool(new_router),
         "by_key": {},
     }
 

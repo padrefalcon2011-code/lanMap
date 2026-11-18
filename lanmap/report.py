@@ -192,7 +192,8 @@ def _changes(model: dict) -> str:
     group("Пропали", [_dev_line(d) for d in c["gone"]])
     group("Закрытые пробросы", [f'<li>{e(_fw_text(f))}</li>' for f in c["forwards_removed"]], "good")
     group("Роутер", [f'<li>{e(t)}</li>' for t in c["router"]])
-    group("Вышли из сети (роутер их помнит)", [_dev_line(d) for d in c["offline"]])
+    group("Вышли из сети (роутер их помнит)" if c.get("has_router") else "Не ответили в этот раз",
+          [_dev_line(d) for d in c["offline"]])
     group("Снова в сети", [_dev_line(d) for d in c["online"]])
     p = c.get("private") or {}
     if p.get("new") or p.get("gone"):

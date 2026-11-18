@@ -240,6 +240,13 @@ class ChangesTest(unittest.TestCase):
         self.assertEqual(whats, ["offline"])
         self.assertEqual(c["changed"], [])
 
+    def test_phone_closed_ports_ignored_opened_kept(self):
+        old = model([mdev(MAC_B, ["192.0.2.10"], ports=[80, 443])])
+        new = model([mdev(MAC_B, ["192.0.2.10"], ports=[22])])
+        new["devices"][0]["identity"]["type"] = "phone"
+        whats = [x["what"] for x in self.cmp(old, new)["by_key"][MAC_B]]
+        self.assertEqual(whats, ["port_open"])
+
     def test_untested_port_is_not_opened(self):
         from lanmap import changes
         old = model([mdev(MAC_B, ["192.0.2.10"], ports=[80])])
