@@ -199,6 +199,100 @@ class RouterTest(unittest.TestCase):
         self.assertEqual(r["name"], "Камера у ворот")
 
 
+def mdev(key, ips, alive=True, ports=(), mac=None, router_only=False, private=False, firmware=None, serial=None,
+         label=None):
+    """Устройство в форме модели devices.json — для сравнения срезов."""
+    mac = mac if mac is not None else key.partition("#")[0]
+    return {"key": key, "mac": mac, "ips": list(ips), "alive": alive, "router_only": router_only,
+            "private_mac": private, "services": [{"port": p, "name": None} for p in ports],
+            "facts": {"onvif": {"SerialNumber": serial} if serial else {}, "upnp": {}},
+            "identity": {"firmware": firmware, "name": None}, "router": {"label": label} if label else None,
+            "title": key, "subtitle": ""}
+
+
+def model(devs, router=None, name="2026-01-01_000000"):
+    return {"snapshot": name, "meta": {"started": "2026-01-01T00:00:00"}, "router": router, "devices": devs}
+
+
+class ChangesTest(unittest.TestCase):
+    TESTED = {22, 23, 80, 443}
+
+    def cmp(self, old, new):
+        from lanmap import changes
+        return changes.compare(old, new, self.TESTED, self.TESTED)
+
+    def test_new_gone_ip_ports(self):
+        old = model([mdev(MAC_B, ["192.0.2.10"], ports=[80, 443]), mdev(MAC_C, ["192.0.2.12"])])
+        new = model([mdev(MAC_B, ["192.0.2.11"], ports=[23, 80]), mdev("00:00:5E:00:53:0D", ["192.0.2.13"])])
+        c = self.cmp(old, new)
+        self.assertEqual([d["key"] for d in c["new"]], ["00:00:5E:00:53:0D"])
+        self.assertEqual([d["key"] for d in c["gone"]], [MAC_C])
+        whats = {x["what"]: x for x in c["by_key"][MAC_B]}
+        self.assertIn("ip", whats)
+        self.assertEqual(whats["port_open"]["port"], 23)
+        self.assertEqual(whats["port_closed"]["port"], 443)
+
+    def test_no_closed_ports_when_silent(self):
+        old = model([mdev(MAC_B, ["192.0.2.10"], ports=[80, 443])])
+        new = model([mdev(MAC_B, ["192.0.2.10"], alive=False)])
+        c = self.cmp(old, new)
+        whats = [x["what"] for x in c["by_key"][MAC_B]]
+        self.assertEqual(whats, ["offline"])
+        self.assertEqual(c["changed"], [])
+
+    def test_untested_port_is_not_opened(self):
+        from lanmap import changes
+        old = model([mdev(MAC_B, ["192.0.2.10"], ports=[80])])
+        new = model([mdev(MAC_B, ["192.0.2.10"], ports=[80, 8080])])
+        c = changes.compare(old, new, {80}, {80, 8080})
+        self.assertEqual(c["changed"], [])
+        self.assertTrue(c["notes"])
+
+    def test_baseline_without_router_is_not_new(self):
+        fw = {"kind": "upnp", "protocol": "tcp", "port": 5000, "to_ip": "192.0.2.10", "to_port": 5000}
+        old = model([mdev(MAC_B, ["192.0.2.10"])])
+        new = model([mdev(MAC_B, ["192.0.2.10"]), mdev(MAC_C, ["192.0.2.12"], alive=False, router_only=True)],
+                    router={"forwards": [fw], "firmware": "1"})
+        c = self.cmp(old, new)
+        self.assertEqual(c["new"], [])
+        self.assertEqual(c["forwards_added"], [])
+        self.assertEqual(c["first_seen_router"], {"devices": 1, "forwards": 1})
+        # А с данными роутера в обоих срезах новый проброс виден
+        old2 = model(old["devices"], router={"forwards": [], "firmware": "1"})
+        self.assertEqual(len(self.cmp(old2, new)["forwards_added"]), 1)
+
+    def test_private_macs_counted_not_listed(self):
+        old = model([mdev(MAC_A, ["192.0.2.20"], private=True)])
+        new = model([mdev("02:00:5E:00:00:0E", ["192.0.2.21"], private=True)])
+        c = self.cmp(old, new)
+        self.assertEqual((c["new"], c["gone"]), ([], []))
+        self.assertEqual(c["private"], {"new": 1, "gone": 1})
+
+    def test_serial_match_when_mac_part_changes(self):
+        old = model([mdev(f"{MAC_B}#SN1", ["192.0.2.10"], serial="SN1", firmware="1.0")])
+        new = model([mdev(f"{MAC_C}#SN1", ["192.0.2.10"], serial="SN1", firmware="1.1")])
+        c = self.cmp(old, new)
+        self.assertEqual((c["new"], c["gone"]), ([], []))
+        self.assertEqual([x["what"] for x in c["changed"][0]["items"]], ["firmware"])
+
+    def test_other_serial_is_not_firmware_change(self):
+        old = model([mdev(MAC_B, ["192.0.2.10"], serial="SN1", firmware="1.0")])
+        new = model([mdev(MAC_B, ["192.0.2.10"], serial="SN2", firmware="2.0")])
+        c = self.cmp(old, new)
+        self.assertEqual([x["what"] for x in c["changed"][0]["items"]], ["serial"])
+
+    def test_previous_snapshot_and_report(self):
+        from lanmap import changes
+        from lanmap.report import _changes
+        base = Path(tempfile.mkdtemp(dir=TMP.name))
+        for name in ("2026-01-01_100000", "2026-01-02_100000", "2026-01-03_100000"):
+            write_json(base / name / "meta.json", {})
+        self.assertEqual(changes.previous_snapshot(base / "2026-01-02_100000").name, "2026-01-01_100000")
+        self.assertIsNone(changes.previous_snapshot(base / "2026-01-01_100000"))
+        c = self.cmp(model([]), model([mdev(MAC_B, ["192.0.2.10"])]))
+        self.assertIn("Новые устройства", _changes({"changes": c}))
+
+
 class NoNetworkSpecificsTest(unittest.TestCase):
     def test_no_control_characters(self):
         for path in list(PACKAGE_DIR.rglob("*.py")) + list(PACKAGE_DIR.rglob("*.json")):

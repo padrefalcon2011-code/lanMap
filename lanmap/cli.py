@@ -84,11 +84,15 @@ def cmd_scan(args) -> int:
     return _finish_build(build, snap, args.open)
 
 
-def _finish_build(build, snap: Path, open_report: bool) -> int:
-    model = build(snap)
+def _finish_build(build, snap: Path, open_report: bool, baseline: Path | None = None) -> int:
+    from lanmap import changes
+    model = build(snap, baseline)
     devs = model["devices"]
     sure = sum(1 for d in devs if d["identity"]["confidence"] >= 3)
     report = snap / "report.html"
+    diff = model.get("changes")
+    if diff:
+        print(diff["error"] if diff.get("error") else changes.summary(diff))
     print(f"Устройств: {len(devs)}, опознаны уверенно: {sure}. Отчёт: {report}")
     if open_report:
         webbrowser.open(report.as_uri())
@@ -97,7 +101,8 @@ def _finish_build(build, snap: Path, open_report: bool) -> int:
 
 def cmd_build(args) -> int:
     from lanmap.build import build
-    return _finish_build(build, _snapshot_arg(args.snapshot), args.open)
+    baseline = _snapshot_arg(args.compare) if args.compare else None
+    return _finish_build(build, _snapshot_arg(args.snapshot), args.open, baseline)
 
 
 def cmd_oui(args) -> int:
@@ -225,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("build", help="пересобрать опознание и отчёт по сохранённому срезу (без сканирования)")
     p.add_argument("snapshot", nargs="?", help="папка среза (по умолчанию последний)")
+    p.add_argument("--compare", metavar="СРЕЗ", help="с каким срезом сравнивать (по умолчанию — предыдущий)")
     p.add_argument("--open", action="store_true")
     p.set_defaults(func=cmd_build)
 

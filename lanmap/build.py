@@ -4,7 +4,7 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 
-from lanmap import actions, devices, identify, oui, registry, routers
+from lanmap import actions, changes, devices, identify, oui, registry, routers
 from lanmap.report import render
 from lanmap.util import now_iso, read_json, write_json
 
@@ -36,10 +36,11 @@ def display(dev: dict) -> tuple[str, str]:
     return kind, found_name or ""
 
 
-def build(snapshot: Path) -> dict:
+def make_model(snapshot: Path, reg: dict | None = None) -> dict:
+    """Модель среза по текущим правилам и реестру. Ничего не записывает."""
     snapshot = Path(snapshot)
     meta = read_json(snapshot / "meta.json", {})
-    reg = registry.load()
+    reg = reg if reg is not None else registry.load()
     devs = devices.build(snapshot, registry.aliases(reg))
     for dev in devs:
         # У MAC-двойников запись по одному MAC неоднозначна: берём только запись по ключу MAC#серийник
@@ -61,6 +62,23 @@ def build(snapshot: Path) -> dict:
         "router_skipped": (read_json(snapshot / "raw" / "router.json") or {}).get("skipped"),
         "devices": devs,
     }
+    return model
+
+
+def build(snapshot: Path, baseline: Path | None = None) -> dict:
+    """Модель + сравнение с прошлым (или указанным) срезом → devices.json и report.html в папке среза."""
+    snapshot = Path(snapshot)
+    reg = registry.load()
+    model = make_model(snapshot, reg)
+    baseline = Path(baseline) if baseline else changes.previous_snapshot(snapshot)
+    model["changes"] = None
+    if baseline and baseline.resolve() != snapshot.resolve():
+        try:
+            # Старый срез пересобирается текущими правилами: иначе улучшение правил выглядело бы как «изменение» в сети
+            old = make_model(baseline, reg)
+            model["changes"] = changes.compare(old, model, changes.tested_ports(baseline), changes.tested_ports(snapshot))
+        except Exception as exc:  # сравнение — дополнительный блок, отчёт без него всё равно нужен
+            model["changes"] = {"error": f"Не удалось сравнить со срезом {baseline.name}: {exc}", "baseline": baseline.name}
     write_json(snapshot / "devices.json", model)
     (snapshot / "report.html").write_text(render(model), encoding="utf-8")
     return model

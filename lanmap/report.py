@@ -33,7 +33,22 @@ def _source_label(source: str) -> str:
     return SOURCE_NAMES.get(source, source)
 
 
-def _card(dev: dict) -> str:
+CHANGE_CLASS = {"new": "chg-new", "offline": "muted", "online": "info", "port_open": "chg-bad",
+                "serial": "warn", "port_closed": "info"}
+
+
+def _card_changes(dev: dict, changes: dict | None) -> tuple[str, str]:
+    """Пометки «что изменилось» для карточки: (бейджи, строка подробностей)."""
+    items = ((changes or {}).get("by_key") or {}).get(dev["key"]) or []
+    if not items:
+        return "", ""
+    badges = "".join(f'<span class="badge {CHANGE_CLASS.get(x["what"], "chg")}" title="{e(x["text"])}">{e(x["short"])}</span>'
+                     for x in items)
+    detail = "; ".join(x["text"] for x in items)
+    return badges, f'<p class="chg-line">С прошлого среза: {e(detail)}</p>'
+
+
+def _card(dev: dict, changes: dict | None = None) -> str:
     ident = dev["identity"]
     reg = dev.get("registry") or {}
     conf = ident["confidence"]
@@ -59,6 +74,8 @@ def _card(dev: dict) -> str:
         badges.append('<span class="badge warn" title="Тот же MAC у другого устройства: мост/ретранслятор или одинаковый MAC">общий MAC</span>')
     if len(dev["ips"]) > 1:
         badges.append(f'<span class="badge warn" title="Один MAC — несколько IP">{len(dev["ips"])} IP</span>')
+    chg_badges, chg_line = _card_changes(dev, changes)
+    badges.append(chg_badges)
 
     facts = []
     facts.append(f'<div><span>IP</span><b>{e(", ".join(dev["ips"]) or "—")}</b></div>')
@@ -109,9 +126,10 @@ def _card(dev: dict) -> str:
     search = " ".join([dev["title"], dev["subtitle"], " ".join(dev["ips"]), dev["mac"] or "", ident["type_label"],
                        ident.get("vendor") or "", ident.get("model") or "",
                        " ".join(str(s["port"]) + " " + (s.get("name") or "") for s in dev["services"])]).lower()
-    return (f'<article class="card" data-group="{e(ident["group"])}" data-conf="{conf}" data-search="{e(search)}">'
+    return (f'<article class="card" data-group="{e(ident["group"])}" data-conf="{conf}" data-search="{e(search)}"'
+            f' data-changed="{1 if chg_line else 0}">'
             f'<header><h3>{e(dev["title"])}</h3><p class="sub">{e(dev["subtitle"])}</p>'
-            f'<div class="badges">{"".join(badges)}</div></header>'
+            f'<div class="badges">{"".join(badges)}</div>{chg_line}</header>'
             f'<div class="facts">{"".join(facts)}</div>{ports_html}'
             f'<div class="actions">{"".join(acts)}</div>{why}</article>')
 
@@ -134,6 +152,53 @@ def _forwards(model: dict, devs: list[dict]) -> str:
     return (head + f'<div class="forwards"><h3>⚠ Открыто из интернета внутрь сети: {len(fw)}</h3>'
             '<p class="meta">Каждый такой проброс — дверь снаружи. Оставь только осознанные (например, VPN).</p>'
             f'<table><tr><th>Вид</th><th>Порт снаружи</th><th>Куда ведёт</th><th>Описание</th></tr>{rows}</table></div>')
+
+
+def _fw_text(f: dict) -> str:
+    return (f'{(f.get("kind") or "").upper()} {f.get("protocol") or ""} {f.get("port") or ""} → '
+            f'{f.get("to_ip") or "?"}:{f.get("to_port") or ""}' + (f' ({f["description"]})' if f.get("description") else ""))
+
+
+def _dev_line(d: dict) -> str:
+    sub = f' <span class="src">{e(d["subtitle"])}</span>' if d.get("subtitle") else ""
+    return f'<li>{e(d["title"])} <span class="src">({e(", ".join(d["ips"]) or d.get("mac") or "")})</span>{sub}</li>'
+
+
+def _changes(model: dict) -> str:
+    """Блок «Что изменилось с прошлого среза»."""
+    c = model.get("changes")
+    if not c:
+        return ""
+    if c.get("error"):
+        return f'<p class="warning">{e(c["error"])}</p>'
+    when = (c.get("baseline_started") or "")[:16].replace("T", " ") or c.get("baseline")
+    head = f'<h3>Что изменилось с прошлого среза <span class="src">({e(when)})</span></h3>'
+    notes = "".join(f'<p class="meta">ℹ {e(n)}</p>' for n in c.get("notes") or [])
+    if not c.get("total"):
+        return f'<div class="changes">{head}<p class="meta">Ничего заметного не изменилось.</p>{notes}</div>'
+
+    parts = []
+
+    def group(title: str, rows: list[str], cls: str = "") -> None:
+        if rows:
+            parts.append(f'<div class="chg-group {cls}"><h4>{e(title)} <span class="count">{len(rows)}</span></h4>'
+                         f'<ul>{"".join(rows)}</ul></div>')
+
+    group("⚠ Новые пробросы из интернета", [f'<li>{e(_fw_text(f))}</li>' for f in c["forwards_added"]], "bad")
+    group("Новые устройства", [_dev_line(d) for d in c["new"]], "bad")
+    group("Изменения на устройствах",
+          [f'<li>{e(d["title"])} <span class="src">({e(", ".join(d["ips"]))})</span><ul>'
+           + "".join(f'<li>{e(x["text"])}</li>' for x in d["items"]) + "</ul></li>" for d in c["changed"]])
+    group("Пропали", [_dev_line(d) for d in c["gone"]])
+    group("Закрытые пробросы", [f'<li>{e(_fw_text(f))}</li>' for f in c["forwards_removed"]], "good")
+    group("Роутер", [f'<li>{e(t)}</li>' for t in c["router"]])
+    group("Вышли из сети (роутер их помнит)", [_dev_line(d) for d in c["offline"]])
+    group("Снова в сети", [_dev_line(d) for d in c["online"]])
+    p = c.get("private") or {}
+    if p.get("new") or p.get("gone"):
+        parts.append(f'<p class="meta">Устройства со случайным (частным) MAC: появилось {p.get("new", 0)}, '
+                     f'пропало {p.get("gone", 0)}. Телефоны меняют такой MAC, поэтому поштучно они не сравниваются.</p>')
+    return f'<div class="changes">{head}{notes}{"".join(parts)}</div>'
 
 
 def render(model: dict) -> str:
@@ -159,10 +224,12 @@ def render(model: dict) -> str:
                         "Подписывать не обязательно сейчас: позже это можно будет сделать кнопкой в интерфейсе.")
 
     forwards_html = _forwards(model, devs)
+    changes_html = _changes(model)
+    has_changes = any(((model.get("changes") or {}).get("by_key") or {}).get(d["key"]) for d in devs)
 
     sections = []
     for g in groups:
-        cards = "".join(_card(d) for d in devs if d["identity"]["group"] == g)
+        cards = "".join(_card(d, model.get("changes")) for d in devs if d["identity"]["group"] == g)
         n = sum(1 for d in devs if d["identity"]["group"] == g)
         sections.append(f'<section data-section="{e(g)}"><h2>{e(g)} <span class="count">{n}</span></h2>'
                         f'<div class="grid">{cards}</div></section>')
@@ -189,11 +256,13 @@ def render(model: dict) -> str:
   </div>
   <p class="meta">Уверенность у отвечавших: {e(summary)}</p>
   {''.join(f'<p class="warning">{e(w)}</p>' for w in warnings)}
+  {changes_html}
   {forwards_html}
   <div class="filters">
     <input id="q" type="search" placeholder="Поиск: IP, MAC, имя, порт, производитель…" autocomplete="off">
     <button class="chip active" data-filter-group="">Все</button>{chips}
     <label class="lowconf"><input type="checkbox" id="low"> только неуверенные</label>
+    {'<label class="lowconf"><input type="checkbox" id="chg"> только изменившиеся</label>' if has_changes else ''}
   </div>
 </header>
 <main>{''.join(sections)}</main>
@@ -242,18 +311,24 @@ details ul{margin:0;padding-left:18px}details li{margin:2px 0}.src{color:var(--m
 .forwards{background:var(--warnbg);border-radius:8px;padding:8px 12px;margin:8px 0;overflow-x:auto}
 .forwards h3{margin:0 0 4px;font-size:15px}.forwards table{border-collapse:collapse;font-size:13px}
 .forwards td,.forwards th{text-align:left;padding:3px 10px 3px 0;vertical-align:top}
+.changes{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:8px 0}
+.changes h3{margin:0 0 4px;font-size:15px}.chg-group h4{margin:8px 0 2px;font-size:13px}
+.chg-group ul{margin:0;padding-left:18px}.chg-group li{margin:2px 0}.chg-group.bad h4{color:var(--c1)}.chg-group.good h4{color:var(--c4)}
+.badge.chg-new{background:var(--c1);color:#fff}.badge.chg-bad{border:1px solid var(--c1);color:var(--c1);background:transparent}
+.badge.chg{border:1px dashed var(--accent);background:transparent}
+.chg-line{margin:6px 0 0;font-size:12px;color:var(--c2)}
 footer{color:var(--muted);text-align:center;padding:20px;font-size:12px}
 .hidden{display:none!important}
 @media (max-width:480px){.top,main{padding-left:12px;padding-right:12px}.grid{grid-template-columns:1fr}}
 """
 
 JS = """
-const q=document.getElementById('q'),low=document.getElementById('low');let group='';
+const q=document.getElementById('q'),low=document.getElementById('low'),chg=document.getElementById('chg');let group='';
 function apply(){const t=q.value.trim().toLowerCase();
  document.querySelectorAll('.card').forEach(c=>{const ok=(!group||c.dataset.group===group)&&(!t||c.dataset.search.includes(t))
-  &&(!low.checked||+c.dataset.conf<3);c.classList.toggle('hidden',!ok)});
+  &&(!low.checked||+c.dataset.conf<3)&&(!chg||!chg.checked||c.dataset.changed==='1');c.classList.toggle('hidden',!ok)});
  document.querySelectorAll('section').forEach(s=>s.classList.toggle('hidden',!s.querySelector('.card:not(.hidden)')));}
-q.addEventListener('input',apply);low.addEventListener('change',apply);
+q.addEventListener('input',apply);low.addEventListener('change',apply);if(chg)chg.addEventListener('change',apply);
 document.querySelectorAll('[data-filter-group]').forEach(b=>b.addEventListener('click',()=>{group=b.dataset.filterGroup;
  document.querySelectorAll('[data-filter-group]').forEach(x=>x.classList.toggle('active',x===b));apply();}));
 document.querySelectorAll('.copy').forEach(b=>b.addEventListener('click',async()=>{const v=b.dataset.copy;
