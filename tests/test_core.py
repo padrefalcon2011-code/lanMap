@@ -13,7 +13,7 @@ os.environ["LANMAP_DATA"] = TMP.name  # тесты не трогают наст�
 
 from lanmap import devices, identify, registry  # noqa: E402
 from lanmap.collectors import ScanContext, dnswire  # noqa: E402
-from lanmap.util import PACKAGE_DIR, is_private_mac, norm_mac, write_json  # noqa: E402
+from lanmap.util import PACKAGE_DIR, is_private_mac, norm_mac, read_json, write_json  # noqa: E402
 
 NET = "192.0.2.0/24"
 MAC_A = "02:00:5E:00:00:0A"   # локально назначенный (как частный MAC)
@@ -784,6 +784,104 @@ class IgdTest(unittest.TestCase):
         self.assertEqual(c["forwards_removed"], [])  # статический не «закрылся»: его просто не видно без роутера
         self.assertEqual([f["port"] for f in c["forwards_added"]], [50003])
         self.assertTrue(any("UPnP-пробросы сравнены" in n for n in c["notes"]))
+
+
+class ServerTest(unittest.TestCase):
+    """Локальный веб-интерфейс: доступ только с токеном и с петлевого адреса, кнопки пишут отметки."""
+
+    @classmethod
+    def setUpClass(cls):
+        import threading
+        from lanmap import server
+        from lanmap.build import build
+        snap = Path(TMP.name) / "snapshots" / "2026-01-01_000000"
+        raw = snap / "raw"
+        write_json(snap / "meta.json", {"interface": {"local_ip": "192.0.2.5", "gateway": "192.0.2.1", "mac": MAC_C,
+                                                      "network": NET}, "hostname": "TESTPC", "admin": True})
+        write_json(raw / "neighbors.json", [{"ip": "192.0.2.10", "mac": MAC_B, "state": "Reachable"}])
+        write_json(raw / "ping.json", {"192.0.2.10": {"alive": True, "ttl": 64}})
+        write_json(raw / "ports.json", {"tested": [23, 80], "open": {"192.0.2.10": [23]}})
+        cls.snap = snap
+        cls.model = build(snap)
+        cls.httpd = server.make_server(0, token="test-token")
+        cls.httpd.RequestHandlerClass.log_message = lambda *a: None
+        cls.port = cls.httpd.server_address[1]
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def req(self, method, path, body=None, headers=None, host=None):
+        import http.client
+        import json
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        hdrs = {"Host": host or f"127.0.0.1:{self.port}"}
+        hdrs.update(headers or {})
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode()
+            hdrs.setdefault("Content-Type", "application/json")
+        conn.request(method, path, body=data, headers=hdrs)
+        r = conn.getresponse()
+        out = r.status, dict(r.getheaders()), r.read().decode("utf-8")
+        conn.close()
+        return out
+
+    def api(self, path, body, token="test-token"):
+        import json
+        code, _, text = self.req("POST", path, body, {"X-LanMap-Token": token})
+        return code, json.loads(text)
+
+    def test_page_needs_token_and_host(self):
+        self.assertEqual(self.req("GET", "/")[0], 403)
+        self.assertEqual(self.req("GET", "/?t=wrong")[0], 403)
+        self.assertEqual(self.req("GET", "/?t=test-token", host="evil.example:80")[0], 403)
+        code, headers, _ = self.req("GET", "/?t=test-token")
+        self.assertEqual(code, 303)
+        cookie = headers["Set-Cookie"].split(";")[0]
+        self.assertIn("HttpOnly", headers["Set-Cookie"])
+        code, _, page = self.req("GET", "/", headers={"Cookie": cookie})
+        self.assertEqual(code, 200)
+        self.assertIn('window.LANMAP={"token": "test-token"}', page)
+        self.assertIn("data-finding=", page)
+        self.assertNotIn("test-token", (self.snap / "report.html").read_text("utf-8"))  # файл отчёта без токена
+        self.assertEqual(self.req("GET", "/", headers={"Cookie": cookie}, host="evil.example")[0], 403)
+
+    def test_api_needs_header_token(self):
+        self.assertEqual(self.api("/api/check", {"code": "E8", "status": "done"}, token="")[0], 403)
+        self.assertEqual(self.api("/api/check", {"code": "E8", "status": "done"}, token="wrong")[0], 403)
+        code, _, _ = self.req("POST", "/api/check", {"code": "E8", "status": "done"},
+                              {"X-LanMap-Token": "test-token"}, host="evil.example")
+        self.assertEqual(code, 403)
+        self.assertEqual(self.req("OPTIONS", "/api/check")[0], 403)
+        code, _, _ = self.req("POST", "/api/check", {"code": "E8"},
+                              {"X-LanMap-Token": "test-token", "Content-Type": "text/plain"})
+        self.assertEqual(code, 415)
+
+    def test_buttons_write_marks(self):
+        from lanmap import checklist, registry, security
+        code, out = self.api("/api/check", {"code": "E8", "status": "done", "note": "восстановил файл"})
+        self.assertEqual((code, out["status"]), (200, "done"))
+        self.assertEqual(checklist.load_marks()["E8"]["note"], "восстановил файл")
+        self.assertEqual(self.api("/api/check", {"code": "E2", "status": "done"})[0], 400)
+
+        found = [f for f in self.model["security"]["findings"] if f["id"] == "TELNET_OPEN"]
+        self.assertTrue(found)
+        code, out = self.api("/api/finding", {"check": "TELNET_OPEN", "key": found[0]["key"], "status": "accepted",
+                                              "reason": "так надо"})
+        self.assertEqual(code, 200)
+        saved = security.load_statuses()[security.uid("TELNET_OPEN", found[0]["key"])]
+        self.assertEqual((saved["status"], saved["reason"], saved["ips"]), ("accepted", "так надо", ["192.0.2.10"]))
+
+        code, out = self.api("/api/sign", {"key": MAC_B, "fields": {"name": "Тестовая камера", "place": ""}})
+        self.assertEqual((code, out["name"]), (200, "Тестовая камера"))
+        self.assertTrue(registry.load()["devices"][MAC_B]["confirmed"])
+        self.assertEqual(self.api("/api/sign", {"key": MAC_B, "fields": {"confirmed": "1"}})[0], 400)
+        self.assertEqual(self.api("/api/sign", {"key": "не MAC", "fields": {"name": "x"}})[0], 400)
+        model = read_json(self.snap / "devices.json")  # отчёт пересобран
+        self.assertEqual(next(d for d in model["devices"] if d["key"] == MAC_B)["title"], "Тестовая камера")
 
 
 class NoNetworkSpecificsTest(unittest.TestCase):

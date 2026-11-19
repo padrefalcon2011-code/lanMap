@@ -20,21 +20,11 @@ def _utf8_console() -> None:
 
 
 def _pick_network(index: int | None, allow_large: bool) -> netinfo.LocalNet:
-    nets = netinfo.list_networks()
-    if index is not None:
-        chosen = [n for n in nets if n.if_index == index and n.up]
-    else:
-        chosen = [n for n in nets if n.default_choice]
-    if not chosen:
-        raise SystemExit("Не нашёл подходящую сеть. Посмотри список: python -m lanmap interfaces")
-    if len(chosen) > 1:
-        lines = "\n".join(f"  --interface {n.if_index}  {n.alias}: {n.network}" for n in chosen)
-        raise SystemExit(f"Подходящих сетей несколько, выбери одну:\n{lines}")
-    net = chosen[0]
-    hosts = netinfo.host_count(net.network)
-    if hosts > netinfo.MAX_HOSTS_DEFAULT and not allow_large:
-        raise SystemExit(f"Сеть {net.network} большая ({hosts} адресов). Если точно нужно — добавь --allow-large")
-    return net
+    from lanmap import ops
+    try:
+        return ops.pick_network(index, allow_large)
+    except ops.OpError as exc:
+        raise SystemExit(str(exc))
 
 
 def _snapshot_arg(value: str | None) -> Path:
@@ -126,20 +116,13 @@ def cmd_import_codex(args) -> int:
 
 
 def cmd_sign(args) -> int:
-    data = registry.load()
+    from lanmap import ops
     mac = _resolve_mac(args.target)
     fields = {k: getattr(args, k) for k in registry.EDITABLE if getattr(args, k, None) is not None}
-    ips = None
-    if "#" in mac:  # MAC-двойник: запомнить адрес, по нему подпись найдётся, когда ключ сменится
-        from lanmap.scan import latest_snapshot
-        snap = latest_snapshot()
-        model = read_json(snap / "devices.json", {}) if snap else {}
-        ips = next((d["ips"] for d in model.get("devices", []) if d["key"] == mac), None)
-    entry = registry.sign(data, mac, fields, ips=ips)
-    if args.also_mac:
-        extra = [m for m in (norm_mac(x) for x in args.also_mac) if m]
-        entry["also_macs"] = sorted(set(entry.get("also_macs", [])) | set(extra))
-    registry.save(data)
+    try:
+        _, entry = ops.sign(mac, fields, args.also_mac)
+    except ops.OpError as exc:
+        raise SystemExit(str(exc))
     print(f"Подписано: {mac} → {entry.get('name', '(без названия)')}. Пересобери отчёт: python -m lanmap build")
     return 0
 
@@ -179,22 +162,14 @@ def cmd_finding(args) -> int:
 
     if not args.check or not args.target or not args.status:
         raise SystemExit("Нужно: finding set <ПРОВЕРКА> <IP|MAC|all> <статус>")
-    check = args.check.upper()
-    if check not in security.BY_ID:
-        raise SystemExit(f"Нет такой проверки: {check}. Есть: {', '.join(security.BY_ID)}")
-    if args.status not in security.STATUSES:
-        raise SystemExit(f"Нет такого статуса: {args.status}. Есть: {', '.join(security.STATUSES)}")
-    mac = norm_mac(args.target.partition("#")[0])
-    targets = [f for f in sec["findings"] if f["id"] == check and (
-        args.target == "all" or args.target in f["ips"] or f["key"] == args.target
-        or (mac and f["key"].partition("#")[0] == mac))]
-    if not targets:
-        raise SystemExit(f"В последнем срезе нет находки {check} для «{args.target}». Список: python -m lanmap finding list")
+    from lanmap import ops
+    try:
+        targets = ops.set_finding(args.check, args.target, args.status, args.reason)
+        ops.rebuild()
+    except ops.OpError as exc:
+        raise SystemExit(str(exc))
     for f in targets:
-        security.set_status(check, f["key"], args.status, args.reason, ips=f.get("ips"), replace=f.get("status_uid"))
-        print(f'{check} · {f["title"]}: {security.STATUSES[args.status]}')
-    from lanmap.build import build
-    build(snap)
+        print(f'{f["id"]} · {f["title"]}: {security.STATUSES[args.status]}')
     print(f"Отчёт пересобран: {snap / 'report.html'}")
     return 0
 
@@ -216,15 +191,47 @@ def cmd_check(args) -> int:
         return 0
     if not args.code or not args.status:
         raise SystemExit("Нужно: check set <E6|E8> <done|open> [--note «…»]")
+    from lanmap import ops
     try:
-        checklist.set_mark(args.code, args.status, args.note)
-    except ValueError as exc:
+        ops.set_check(args.code, args.status, args.note)
+        ops.rebuild()
+    except ops.OpError as exc:
         raise SystemExit(str(exc))
     print(f'{args.code.upper()}: {checklist.MARK_STATUSES[args.status]}')
-    from lanmap.build import build
-    build(snap)
     print(f"Отчёт пересобран: {snap / 'report.html'}")
     return 0
+
+
+def cmd_serve(args) -> int:
+    from lanmap import server
+    from lanmap.scan import latest_snapshot
+    snap = latest_snapshot()
+    if snap and (snap / "devices.json").exists():
+        print("Пересобираю отчёт последнего среза текущими правилами…")
+        ops_build(snap)
+    httpd = server.make_server(args.port)
+    url = server.url_for(httpd)
+    print(f"LanMap: {url}")
+    print("Ссылка с ключом доступа действует, пока открыто это окно. Остановить — Ctrl+C.")
+    if not netinfo.is_admin():
+        print("Внимание: без прав администратора срез из интерфейса пропустит часть проверок.")
+    if not args.no_open:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("Остановлено.")
+    finally:
+        httpd.server_close()
+    return 0
+
+
+def ops_build(snap: Path) -> None:
+    from lanmap.build import build
+    try:
+        build(snap)
+    except Exception as exc:  # старый отчёт всё равно можно показать
+        print(f"Не удалось пересобрать: {exc}")
 
 
 def _gateway() -> str:
@@ -344,6 +351,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("status", nargs="?", help="done или open")
     p.add_argument("--note", help="что сделано (например, «восстановил файл из копии 18.11»)")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("serve", help="локальный веб-интерфейс: отчёт с кнопками (срез, подписать, отметить)")
+    p.add_argument("--port", type=int, default=7480, help="порт (по умолчанию 7480; если занят — любой свободный)")
+    p.add_argument("--no-open", action="store_true", help="не открывать браузер")
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("router", help="вход в роутер (только чтение) и проверка доступа")
     p.add_argument("action", choices=["login", "test", "forget", "probe"],

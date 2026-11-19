@@ -53,5 +53,5 @@ def build(dev: dict) -> list[dict]:
         actions.append({"kind": "copy", "label": "MAC", "value": dev["mac"], "hint": ""})
         actions.append({"kind": "copy", "label": "Команда «подписать»",
                         "value": f'python -m lanmap sign {dev["key"]} --name "…"',
-                        "hint": "Подписать устройство в реестре"})
+                        "hint": "Подписать устройство в реестре", "static_only": True})
     return actions

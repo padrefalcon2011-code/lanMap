@@ -52,8 +52,9 @@ def announced_ports(multi: dict, ctx: ScanContext) -> dict[str, set[int]]:
 
 
 class Progress:
-    def __init__(self, quiet: bool = False):
+    def __init__(self, quiet: bool = False, on_step=None):
         self.quiet = quiet
+        self.on_step = on_step  # для веб-интерфейса: показать, на каком этапе срез
         self.t0 = time.monotonic()
         self.stages: list[dict] = []
 
@@ -62,6 +63,8 @@ class Progress:
         self.stages.append({"at_s": round(elapsed, 1), "stage": text})
         if not self.quiet:
             print(f"[{elapsed:6.1f} с] {text}", flush=True)
+        if self.on_step:
+            self.on_step(text)
 
 
 async def _ports_and_probes(ctx: ScanContext, targets: dict[str, list[int]], progress: Progress) -> tuple[dict, list]:
@@ -77,13 +80,13 @@ async def _ports_and_probes(ctx: ScanContext, targets: dict[str, list[int]], pro
     return open_ports, list(probes)
 
 
-def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool = False) -> Path:
+def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool = False, on_step=None) -> Path:
     ports = ports or QUICK
     ctx = ScanContext(local_ip=net.local_ip, network=net.network, gateway=net.gateway,
                       if_index=net.if_index, local_mac=net.mac)
     snap = new_snapshot_dir()
     raw = snap / "raw"
-    progress = Progress(quiet)
+    progress = Progress(quiet, on_step)
     meta = {
         "lanmap_version": __version__,
         "started": now_iso(),

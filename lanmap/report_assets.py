@@ -48,6 +48,7 @@ ICONS = r"""<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
 <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></symbol>
 <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
 <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.5 6.5a4 4 0 0 0 5 5L21 13l-8 8-3-3 0.5-1.5a4 4 0 0 0-5-5L4 13 3 10l8-8 3 3z"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></symbol>
 <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
 <symbol id="i-cash" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9.5v0.01M18 14.5v0.01"/></symbol>
 <symbol id="i-bot" viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4.5M12 4.5h0.01M9.5 13v1M14.5 13v1M2.5 12.5v3M21.5 12.5v3"/></symbol>
@@ -335,6 +336,28 @@ height:24px;line-height:24px;font-size:13px}.wrap{padding:12px}
 .sl{flex-direction:row;padding:0 0 0 10px;gap:8px;min-height:34px}.sl svg.i{width:26px;transform:rotate(90deg)}
 .sl.l svg.i{transform:rotate(-90deg)}.dbody{padding-left:14px}.tarr{display:none}.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}
 main.list .thead{grid-template-columns:auto 1fr auto;grid-template-areas:"icon main side" "marks marks marks"}}
+/* веб-интерфейс (python -m lanmap serve): кнопки вместо команд; в статическом отчёте скрыты */
+.live-only{display:none!important}.live .live-only{display:inline-flex!important}.live .static-only{display:none!important}
+.lv{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
+.sbtn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:13px;font-weight:600;padding:7px 11px;border-radius:10px;
+ border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+.sbtn:hover{border-color:var(--accent);color:var(--accent)}
+.sbtn.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.sbtn.on.good{background:var(--good);border-color:var(--good)}.sbtn.on.crit{background:var(--crit);border-color:var(--crit)}
+.sbtn.save{background:var(--accent);border-color:var(--accent);color:#fff}
+.lv input{font:inherit;font-size:13px;padding:7px 10px;border-radius:10px;border:1px solid var(--line);background:var(--card);
+ color:var(--fg);min-width:0;flex:1 1 170px}
+.lv input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.signf input{flex:1 1 150px}
+.act.sign{border-color:var(--accent);color:var(--accent);font-weight:600}
+.busy{opacity:.6;pointer-events:none}
+.scanbtn.busy svg{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.scanst{font-size:12px;color:var(--muted);max-width:42ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scanst.crit{color:var(--crit)}
+.toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,20px);background:var(--crit);color:#fff;padding:10px 16px;
+ border-radius:12px;opacity:0;pointer-events:none;transition:.2s;z-index:50;max-width:90vw;font-size:14px}
+.toast.on{opacity:1;transform:translate(-50%,0)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
 
@@ -402,5 +425,80 @@ $$('[data-copy]').forEach(b=>b.addEventListener('click',async e=>{e.stopPropagat
 // всплывающие заметки: закрывать по клику мимо
 document.addEventListener('click',e=>{$$('details.pill[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});
 sync();
+
+// веб-интерфейс (python -m lanmap serve): кнопки вместо команд. Без сервера (файл отчёта) ничего не делает.
+const L=window.LANMAP;
+if(L){
+ document.body.classList.add('live');
+ const ico=n=>`<svg class="i s" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+ const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ function toast(msg){let t=$('#toast');if(!t){t=document.createElement('div');t.id='toast';t.className='toast';
+  t.setAttribute('role','alert');document.body.appendChild(t);}
+  t.textContent=msg;t.classList.add('on');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('on'),6000);}
+ async function api(path,body,el){if(el)el.classList.add('busy');
+  try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-LanMap-Token':L.token},
+   body:JSON.stringify(body)});const j=await r.json().catch(()=>({}));
+   if(!r.ok)throw new Error(j.error||('ошибка '+r.status));return j;}
+  catch(err){toast(err.message==='Failed to fetch'?'Сервер LanMap не отвечает: окно serve закрыто?':err.message);throw err;}
+  finally{if(el)el.classList.remove('busy');}}
+ // после записи страница перезагружается с новым отчётом: вернуть прокрутку и раскрыть то, с чем работали
+ function back(id){try{sessionStorage.setItem('lanmap.back',JSON.stringify({y:scrollY,id}))}catch(e){}location.reload();}
+
+ // находка: статус кнопками + причина
+ const FS=[['open','alert','открыта','crit'],['in_progress','wrench','в работе',''],['fixed','check','исправлена','good'],
+  ['accepted','eye','оставляю','' ],['na','minus','не применимо','']];
+ $$('[data-finding]').forEach(c=>{const d=JSON.parse(c.dataset.finding);
+  c.className='lv';
+  c.innerHTML=FS.map(([k,i,t,cls])=>`<button class="sbtn ${cls}${d.status===k?' on':''}" data-st="${k}" title="${esc(t)}">${ico(i)}${esc(t)}</button>`).join('')
+   +`<input type="text" maxlength="300" placeholder="почему (для «оставляю»)" value="${esc(d.reason)}">`;
+  const inp=$('input',c);
+  $$('[data-st]',c).forEach(b=>b.addEventListener('click',async()=>{
+   try{await api('/api/finding',{check:d.check,key:d.key,status:b.dataset.st,reason:inp.value},c);back(c.dataset.id);}catch(e){}}));});
+
+ // E6, E8: сделано / не сделано + заметка
+ $$('[data-mark]').forEach(c=>{const d=JSON.parse(c.dataset.mark);
+  c.className='lv';
+  c.innerHTML=`<button class="sbtn good${d.done?' on':''}" data-st="done">${ico('check')}сделано</button>`
+   +`<button class="sbtn${d.done?'':' on'}" data-st="open">${ico('x')}не сделано</button>`
+   +`<input type="text" maxlength="300" placeholder="что сделал" value="${esc(d.note)}">`;
+  const inp=$('input',c);
+  $$('[data-st]',c).forEach(b=>b.addEventListener('click',async()=>{
+   try{await api('/api/check',{code:d.code,status:b.dataset.st,note:inp.value},c);back(c.dataset.id);}catch(e){}}));});
+
+ // подписать устройство: название, место, чьё
+ $$('[data-sign]').forEach(b=>b.addEventListener('click',ev=>{ev.stopPropagation();
+  const acts=b.closest('.acts');let f=acts.nextElementSibling;
+  if(f&&f.classList.contains('signf')){f.remove();return;}
+  const d=JSON.parse(b.dataset.sign);f=document.createElement('div');f.className='lv signf';
+  f.innerHTML=`<input name="name" maxlength="120" placeholder="название: камера над калиткой" value="${esc(d.name)}">`
+   +`<input name="place" maxlength="120" placeholder="где стоит" value="${esc(d.place)}">`
+   +`<input name="owner" maxlength="120" placeholder="чьё" value="${esc(d.owner)}">`
+   +`<button class="sbtn save">${ico('check')}сохранить</button><button class="sbtn" data-x>${ico('x')}</button>`;
+  acts.after(f);const first=$('input',f);first.focus();first.select();
+  const save=async()=>{const fields={};$$('input',f).forEach(i=>fields[i.name]=i.value.trim());
+   if(!fields.name){toast('Нужно название');first.focus();return;}
+   try{await api('/api/sign',{key:d.key,fields},f);back(b.dataset.id);}catch(e){}};
+  $('.save',f).addEventListener('click',save);$('[data-x]',f).addEventListener('click',()=>f.remove());
+  f.addEventListener('keydown',e=>{if(e.key==='Enter')save();if(e.key==='Escape')f.remove();});}));
+
+ // новый срез: запуск и ход
+ const sb=$('#scan'),ss=$('#scanst');let scanning=false;
+ async function poll(){let j;
+  try{const r=await fetch('/api/scan',{headers:{'X-LanMap-Token':L.token}});j=await r.json();}
+  catch(e){ss.hidden=false;ss.className='scanst crit';ss.textContent='сервер не отвечает';sb.classList.remove('busy');return;}
+  if(j.running){scanning=true;sb.classList.add('busy');ss.hidden=false;ss.className='scanst';
+   ss.textContent=j.stages.length?j.stages[j.stages.length-1]:'начинаю…';ss.title=ss.textContent;setTimeout(poll,1500);return;}
+  sb.classList.remove('busy');
+  if(j.error){ss.hidden=false;ss.className='scanst crit';ss.textContent='срез не удался: '+j.error;ss.title=j.error;}
+  else if(scanning&&j.snapshot){try{sessionStorage.removeItem('lanmap.back')}catch(e){}scrollTo(0,0);location.reload();}}
+ if(sb)sb.addEventListener('click',async()=>{try{await api('/api/scan',{},sb);}catch(e){}scanning=true;poll();});
+ poll();
+
+ // вернуть прокрутку и раскрыть то, с чем работали
+ let bk=null;try{bk=JSON.parse(sessionStorage.getItem('lanmap.back')||'null');sessionStorage.removeItem('lanmap.back');}catch(e){}
+ if(bk){if(bk.id){const el=$$('[data-id]').find(x=>x.dataset.id===bk.id);
+   for(let p=el;p;p=p.parentElement){if(p.tagName==='DETAILS')p.open=true;if(p.classList&&p.classList.contains('tile'))openTile(p,true);}}
+  scrollTo(0,bk.y||0);}
+}
 })();
 """

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import ipaddress
+import json
 from collections import Counter
 
 from lanmap import forwards as fw_mod
@@ -51,6 +52,11 @@ def icon(name: str, cls: str = "", label: str | None = None) -> str:
     aria = f' role="img" aria-label="{e(label)}"' if label else ' aria-hidden="true"'
     title = f"<title>{e(label)}</title>" if label else ""
     return f'<svg class="i {cls}"{aria}>{title}<use href="#i-{name}"/></svg>'
+
+
+def live(data: dict) -> str:
+    """Данные для кнопки веб-интерфейса (python -m lanmap serve). В статическом отчёте не используются."""
+    return e(json.dumps(data, ensure_ascii=False))
 
 
 def tip(text: str) -> str:
@@ -186,8 +192,14 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
             acts.append(f'<a class="act{danger}" href="{e(a["url"])}" target="_blank" rel="noopener" title="{e(a.get("hint", ""))}">'
                         f'{icon("open", "s")}<span class="lbl">{e(a["label"])}</span></a>')
         else:
-            acts.append(f'<button class="act{danger}" data-copy="{e(a["value"])}" title="{e(a.get("hint", "") or a["value"])}">'
+            static = " static-only" if a.get("static_only") else ""  # в веб-интерфейсе вместо неё кнопка
+            acts.append(f'<button class="act{danger}{static}" data-copy="{e(a["value"])}" title="{e(a.get("hint", "") or a["value"])}">'
                         f'{icon("copy", "s")}<span class="lbl">{e(a["label"])}</span></button>')
+    if dev.get("mac"):
+        pre = {"name": reg.get("name") or r.get("label") or "", "place": reg.get("place") or "",
+               "owner": reg.get("owner") or ""}
+        acts.insert(0, f'<button class="act live-only sign" data-sign="{live({"key": dev["key"], **pre})}" '
+                       f'data-id="s|{e(dev["key"])}">{icon("pencil", "s")}<span class="lbl">Подписать</span></button>')
 
     chosen = "".join(
         f'<li><b>{FIELD_NAMES.get(k, k)}:</b> {e(v["value"] if k != "type" else ident["type_label"])} '
@@ -418,7 +430,9 @@ def _crit_row(c: dict, present: set[str]) -> str:
     if c["id"] in ("E6", "E8"):
         cmd = (f'python -m lanmap check set {c["id"]} open' if c["status"] == "ok"
                else f'python -m lanmap check set {c["id"]} done --note "…"')
-        body.append(f'<div class="cli">{"Снять отметку" if c["status"] == "ok" else "Отметить"}: <code>{e(cmd)}</code>'
+        mark = {"code": c["id"], "done": c["status"] == "ok", "note": (c.get("mark") or {}).get("note") or ""}
+        body.append(f'<div class="cli" data-mark="{live(mark)}" data-id="c|{e(c["id"])}">'
+                    f'{"Снять отметку" if c["status"] == "ok" else "Отметить"}: <code>{e(cmd)}</code>'
                     f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
                     f'<span class="lbl">копировать</span></button></div>')
     if c.get("skipped"):
@@ -547,11 +561,14 @@ def _dev_row(check, f: dict, present: set[str], rvendor: str | None) -> str:
     target = f["ips"][0] if f.get("ips") else f["key"]
     cmd = f'python -m lanmap finding set {check.id} {target} accepted --reason "…"'
     quiet = " quiet" if f["status"] in sec_mod.QUIET_STATUSES else ""
+    now = {"fixed_pending": "fixed", "regress": "open"}.get(f["status"], f["status"])
+    mark = {"check": check.id, "key": f["key"], "status": now, "reason": f.get("reason") or ""}
     return (f'<details class="drow{quiet}"><summary>{icon("chevron", "s chev")}'
             f'<span class="who"><span style="color:{color};display:inline-flex">{icon(type_icon(f.get("type")))}</span>'
             f'{e(f["title"])}</span>{ip}<span class="det">{e(f["detail"])}</span>{conf}{_status_chip(f)}{goto}</summary>'
             f'<div class="dbody">{kind}<ol>{ol}</ol>'
-            f'<div class="cli">Отметить (in_progress, fixed, accepted — оставляю осознанно): <code>{e(cmd)}</code>'
+            f'<div class="cli" data-finding="{live(mark)}" data-id="f|{e(check.id)}|{e(f["key"])}">'
+            f'Отметить (in_progress, fixed, accepted — оставляю осознанно): <code>{e(cmd)}</code>'
             f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
             f'<span class="lbl">копировать</span></button></div></div></details>')
 
@@ -770,6 +787,8 @@ def render(model: dict) -> str:
     <h1>{icon("devices", "l")}Сеть {e(iface.get('network', '?'))}</h1>
     <span class="when">{e(started)}</span>
     <span class="spacer"></span>
+    <span id="scanst" class="scanst" hidden></span>
+    <button class="iconbtn live-only scanbtn" id="scan" {tip("Сделать новый срез сети")}>{icon("refresh", "s")}<span>Срез</span></button>
     <button class="iconbtn tip-l" id="theme" {tip("Светлая / тёмная тема")}>{icon("sun", "s")}{icon("moon", "s")}</button>
   </div>
   {_pills(model)}
