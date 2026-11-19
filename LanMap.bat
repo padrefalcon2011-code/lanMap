@@ -19,8 +19,9 @@ set LANMAP_NO_ADMIN=1
 set PY=python
 where python >nul 2>&1 || set PY=py -3
 %PY% -m lanmap serve %*
+rem Выключили кнопкой в интерфейсе — окно закрывается само; при ошибке ждёт, чтобы её можно было прочитать
 if errorlevel 1 (
   echo.
   echo LanMap остановился с ошибкой. Нужен Python 3.12+: https://www.python.org/downloads/
+  pause
 )
-pause

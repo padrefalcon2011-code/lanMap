@@ -219,6 +219,7 @@ def cmd_serve(args) -> int:
         webbrowser.open(url)
     try:
         httpd.serve_forever()
+        print("Выключено из интерфейса.")
     except KeyboardInterrupt:
         print("Остановлено.")
     finally:

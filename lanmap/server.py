@@ -309,6 +309,14 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             return self._json(400, {"error": "нужен объект JSON"})
         route = urlsplit(self.path).path
+        if route == "/api/shutdown":
+            if self.state.scan_status()["running"]:
+                return self._json(409, {"error": "Идёт срез — выключить можно, когда он закончится"})
+            self.state.stop_watch()
+            self._json(200, {"ok": True})
+            # Остановить сервер из его же обработчика можно только из другого потока
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return None
         if route == "/api/scan":
             started = self.state.start_scan()
             return self._json(202 if started else 409, self.state.scan_status())

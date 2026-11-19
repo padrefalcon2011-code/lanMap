@@ -360,6 +360,10 @@ main.list .thead{grid-template-columns:auto 1fr auto;grid-template-areas:"icon m
 .toast.on{opacity:1;transform:translate(-50%,0)}
 /* «Найти устройство» */
 .findbtn{border-color:var(--accent);color:var(--accent);font-weight:600}
+.quitbtn:hover{border-color:var(--crit);color:var(--crit)}
+.bye{position:fixed;inset:0;z-index:60;background:var(--bg);display:grid;place-items:center;text-align:center;padding:16px}
+.bye svg.i{width:64px;height:64px;color:var(--muted)}
+.bye b{display:block;font-size:22px;margin:12px 0 6px}
 .finder{position:fixed;inset:0;z-index:40;background:var(--bg);overflow:auto;padding:16px}
 .finder[hidden]{display:none}
 .finder .fin{max-width:1200px;margin:0 auto}
@@ -598,6 +602,15 @@ if(L){
   box.onkeydown=e=>{if(e.key==='Enter')save();if(e.key==='Escape'){box.hidden=true;e.stopPropagation();}};}
  if(fb)fb.addEventListener('click',fOpen);
  try{if(sessionStorage.getItem('lanmap.finder'))fOpen();}catch(e){}
+
+ // выключить: сервер останавливается, вкладка закрывается (если браузер разрешит — иначе подсказка)
+ const qb=$('#quit');
+ if(qb)qb.addEventListener('click',async()=>{if(!confirm('Выключить LanMap?'))return;
+  try{await api('/api/shutdown',{},qb);}catch(e){return;}
+  clearTimeout(ftimer);fbox=null;try{sessionStorage.removeItem('lanmap.finder')}catch(e){}
+  const bye=document.createElement('div');bye.className='bye';
+  bye.innerHTML=`<div>${ico('power')}<b>LanMap выключен</b><span class="muted">Эту вкладку можно закрыть. Запустить снова — LanMap.bat</span></div>`;
+  document.body.appendChild(bye);setTimeout(()=>window.close(),300);});
 
  // вернуть прокрутку и раскрыть то, с чем работали
  let bk=null;try{bk=JSON.parse(sessionStorage.getItem('lanmap.back')||'null');sessionStorage.removeItem('lanmap.back');}catch(e){}

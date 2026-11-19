@@ -883,6 +883,24 @@ class ServerTest(unittest.TestCase):
         model = read_json(self.snap / "devices.json")  # отчёт пересобран
         self.assertEqual(next(d for d in model["devices"] if d["key"] == MAC_B)["title"], "Тестовая камера")
 
+    def test_shutdown_button_stops_server(self):
+        import threading
+        from lanmap import server
+        httpd = server.make_server(0, token="t2")
+        httpd.RequestHandlerClass.log_message = lambda *a: None
+        loop = threading.Thread(target=httpd.serve_forever, daemon=True)
+        loop.start()
+        old_port, self.port = self.port, httpd.server_address[1]
+        try:
+            self.assertEqual(self.api("/api/shutdown", {}, token="wrong")[0], 403)
+            self.assertTrue(loop.is_alive())
+            self.assertEqual(self.api("/api/shutdown", {}, token="t2")[0], 200)
+            loop.join(5)
+            self.assertFalse(loop.is_alive())  # serve_forever вернулся — serve завершится, окно закроется
+        finally:
+            self.port = old_port
+            httpd.server_close()
+
     def test_interrupted_scan_is_ignored(self):
         """Прерванный срез (папка только с meta.json) не забирает ни страницу, ни отметки."""
         import shutil
