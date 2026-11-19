@@ -13,6 +13,7 @@ from collections import Counter
 
 from lanmap import forwards as fw_mod
 from lanmap import security as sec_mod
+from lanmap import share as share_mod
 from lanmap.devices import connection_text
 from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
 from lanmap.report_assets import CSS, ICONS, JS, SETUP_JS
@@ -55,7 +56,7 @@ def icon(name: str, cls: str = "", label: str | None = None) -> str:
 
 
 def live(data: dict) -> str:
-    """Данные для кнопки веб-интерфейса (python -m lanmap serve). В статическом отчёте не используются."""
+    """JSON для кнопки в атрибуте data-…: веб-интерфейса (data-sign и др.) или «Помочь опознать» (data-share)."""
     return e(json.dumps(data, ensure_ascii=False))
 
 
@@ -200,6 +201,9 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
                "owner": reg.get("owner") or ""}
         acts.insert(0, f'<button class="act live-only sign" data-sign="{live({"key": dev["key"], **pre})}" '
                        f'data-id="s|{e(dev["key"])}">{icon("pencil", "s")}<span class="lbl">Подписать</span></button>')
+    acts.append(f'<button class="act" data-share="{live(share_mod.payload(dev))}" title="Обезличенный рассказ об устройстве '
+                f'для заявки на GitHub: так LanMap научится его узнавать">{icon("question", "s")}'
+                f'<span class="lbl">Помочь опознать</span></button>')
 
     chosen = "".join(
         f'<li><b>{FIELD_NAMES.get(k, k)}:</b> {e(v["value"] if k != "type" else ident["type_label"])} '

@@ -1237,6 +1237,85 @@ class SetupApiTest(unittest.TestCase):
         self.assertIn("Сделать первый срез", page)
 
 
+class ShareTest(unittest.TestCase):
+    """«Помочь опознать»: в тексте для публичной заявки нет ничего личного, а улики для правила есть."""
+
+    SECRETS = ("192.0.2.77", "198.51.100.9", "00:00:5E:00:53:7A", "00-00-5E-00-53-7B", "СекретноеИмя", "Комната-Маши",
+               "SSID-Секрет", "SN-SECRET-1", "UDN-SECRET-2", "HW-SECRET-3", "fn-secret", "deviceid-secret",
+               "note-secret", "cn-secret.example", "san-secret", "netbios-secret", "dns-secret", "rdns-secret",
+               "mdnsinst-secret", "body-secret", "location-secret", "dhcp-secret", "mdnshost-secret", "ap-secret",
+               "registry-secret", "evidence-secret", "12345678-1234-1234-1234-123456789abc")
+
+    def dev(self):
+        d = device(
+            ports=[80, 554], oui="Test Vendor GmbH", ttl=64, mdns_services=["_ipp._tcp"],
+            mdns_txt={"ty": "Printer X100", "fn": "fn-secret", "deviceid": "deviceid-secret", "note": "note-secret"},
+            mdns_hosts=["mdnshost-secret.local"], mdns_instances=["mdnsinst-secret"],
+            upnp={"manufacturer": ["TestCorp"], "modelName": ["X100"], "friendlyName": ["СекретноеИмя"],
+                  "serialNumber": ["SN-SECRET-1"], "UDN": ["uuid:12345678-1234-1234-1234-123456789abc"],
+                  "presentationURL": ["http://192.0.2.77/"], "UDN2": ["UDN-SECRET-2"]},
+            onvif={"Manufacturer": "CamCo", "Model": "AB123_C45DE67-FG_8M", "SerialNumber": "SN-SECRET-1",
+                   "HardwareId": "HW-SECRET-3"},
+            http=[{"port": 80, "tls": False, "status": "HTTP/1.1 200 OK", "server": "lighttpd", "title": "Web UI",
+                   "realm": "", "body": "body-secret 192.0.2.77", "location": "http://192.0.2.77/location-secret"}],
+            tls=[{"port": 443, "subject": {"commonName": "cn-secret.example", "organizationName": "TestCorp"},
+                  "san": ["san-secret"], "issuer": {}}],
+            rtsp=["Server 1.0"], banners=[{"port": 3306, "text": "\x05E� Host '198.51.100.9' denied"}],
+            netbios={"computer": "netbios-secret"}, dns=["dns-secret"], router_names=["rdns-secret"],
+            router={"label": "Комната-Маши", "hostname": "dhcp-secret", "ssid": "SSID-Секрет", "ap": "ap-secret",
+                    "link": "wifi", "band": "5 ГГц", "mac": "00-00-5E-00-53-7B", "ip": "192.0.2.77"})
+        d["ips"] = ["192.0.2.77"]
+        d["mac"] = d["key"] = "00:00:5E:00:53:7A"
+        d["router"] = d["facts"]["router"]
+        d["registry"] = {"name": "registry-secret", "owner": "registry-secret"}
+        d["evidence"] = [{"source": "router", "text": "evidence-secret"}]
+        d["identity"] = {"type": "printer", "type_label": "Принтер", "confidence_label": "высокая", "vendor": "TestCorp",
+                         "model": "X100", "name": "СекретноеИмя", "rules": ["printer-mdns"],
+                         "chosen": {"name": {"value": "СекретноеИмя", "why": "fn-secret"}}}
+        return d
+
+    def test_no_secrets(self):
+        from lanmap import share
+        p = share.payload(self.dev())
+        body = p["text"] + "\n" + p["lanmap"]
+        for s in self.SECRETS:
+            self.assertNotIn(s.lower(), body.lower(), s)
+        for s in ("Принтер (высокая)", "TestCorp", "X100", "Test Vendor", "80, 554", "_ipp._tcp", "ty=Printer X100",
+                  "lighttpd", "«Web UI»", "организация TestCorp", "Model=AB123_C45DE67-FG_8M", "Wi-Fi 5 ГГц",
+                  "printer-mdns", "TTL: 64", "Host '<ip>' denied"):
+            self.assertIn(s, body)
+        self.assertNotRegex(body, r"[\x00-\x08\x0b-\x1f�]")
+
+    def test_names_opt_in(self):
+        """Имя, которое устройство сообщает само (DHCP, mDNS), — отдельно, под галочкой; подпись владельца — никогда."""
+        from lanmap import share
+        p = share.payload(self.dev())
+        self.assertIn("dhcp-secret", p["names"])
+        self.assertIn("mdnshost-secret", p["names"])
+        self.assertNotIn(".local", p["names"])
+        for s in ("Комната-Маши", "netbios-secret", "СекретноеИмя"):
+            self.assertNotIn(s, p["names"])
+        bare = device()
+        bare["identity"] = {}
+        self.assertEqual(share.payload(bare)["names"], "")
+        self.assertIn("улик почти нет", share.payload(bare)["text"])
+
+    def test_button_in_report(self):
+        import html as html_mod
+        import json
+        from lanmap.report import _detail
+        d = self.dev()
+        d["identity"].update(group="Принтеры", confidence=3, chosen={}, conflicts=[], notes=[], firmware=None, os=None)
+        d.update(services=[], actions=[], title="t")
+        page = _detail(d)
+        m = re.search(r'data-share="([^"]*)"', page)
+        self.assertIsNotNone(m)
+        data = json.loads(html_mod.unescape(m.group(1)))
+        self.assertEqual(set(data), {"lanmap", "text", "names"})
+        for s in self.SECRETS:
+            self.assertNotIn(s.lower(), (data["lanmap"] + data["text"]).lower(), s)
+
+
 class NoNetworkSpecificsTest(unittest.TestCase):
     def test_no_control_characters(self):
         for path in list(PACKAGE_DIR.rglob("*.py")) + list(PACKAGE_DIR.rglob("*.json")):

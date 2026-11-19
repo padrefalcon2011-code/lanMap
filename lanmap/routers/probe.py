@@ -10,24 +10,13 @@ import asyncio
 import re
 
 from lanmap import oui
+from lanmap.anonymize import anonymize
 from lanmap.collectors import ScanContext, discovery, protocols, tcp
 from lanmap.devices import parse_http
 from lanmap.netinfo import LocalNet
 
 PROBE_PORTS = [22, 23, 53, 80, 161, 443, 1900, 5000, 7547, 8080, 8291, 8443, 8728, 49152, 49000, 37215]
 VENDOR_HEADERS = re.compile(r"^(x-[a-z0-9-]+|server|www-authenticate)$", re.I)
-
-_IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-_MAC = re.compile(r"\b[0-9A-Fa-f]{2}(?:[:-]?[0-9A-Fa-f]{2}){5}\b")
-_UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
-_TOKENISH = re.compile(r"\b(?=[A-Za-z0-9+/=_-]*\d)(?=[A-Za-z0-9+/=_-]*[A-Za-z])[A-Za-z0-9+/=_-]{24,}\b")
-
-
-def anonymize(text: str) -> str:
-    text = _UUID.sub("<uuid>", text)
-    text = _MAC.sub("<mac>", text)
-    text = _IPV4.sub("<ip>", text)
-    return _TOKENISH.sub("<token>", text)
 
 
 async def _ports_and_banners(ctx: ScanContext, host: str) -> tuple[list[int], list[dict]]:

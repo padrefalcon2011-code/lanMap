@@ -381,6 +381,8 @@ dialog.setupdlg::backdrop{background:rgba(0,0,0,.45)}
 .sx form.lv input{flex:1 1 140px}
 .sx textarea{width:100%;min-height:150px;margin-top:8px;font:12px/1.4 ui-monospace,Consolas,monospace;padding:8px;border-radius:10px;
  border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:vertical}
+.shname{display:block;margin-top:8px;font-size:13px;cursor:pointer}.shname input{margin:0 6px 0 0;vertical-align:-2px}
+.shname .muted{font-size:12px}
 .reads{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}.reads span{display:inline-flex;align-items:center;gap:3px;font-size:12px;
  padding:2px 8px;border-radius:999px;background:var(--chip)}.reads span.no{color:var(--crit)}
 .sbtn.busy svg{animation:spin 1s linear infinite}
@@ -498,6 +500,40 @@ $$('[data-kpi]').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.kp
 $$('[data-copy]').forEach(b=>b.addEventListener('click',async e=>{e.stopPropagation();const v=b.dataset.copy;
  try{await navigator.clipboard.writeText(v)}catch(err){const a=document.createElement('textarea');a.value=v;document.body.appendChild(a);
  a.select();document.execCommand('copy');a.remove()}const l=$('.lbl',b),old=l.textContent;l.textContent='✓';setTimeout(()=>l.textContent=old,1100);}));
+
+// «Помочь опознать»: обезличенный текст собран при сборке отчёта (lanmap/share.py), работает и без сервера
+const NEW_ISSUE='https://github.com/padrefalcon2011-code/lanMap/issues/new';
+let shdlg=null;
+function shareOpen(d,title){
+ const sico=n=>`<svg class="i s" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+ const sesc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ if(!shdlg){shdlg=document.createElement('dialog');shdlg.className='setupdlg';document.body.appendChild(shdlg);
+  shdlg.addEventListener('click',e=>{if(e.target===shdlg)shdlg.close();});}
+ shdlg.innerHTML=`<div class="dh"><h2>${sico('question')}Помочь опознать</h2><button class="iconbtn" data-close title="Закрыть">${sico('x')}</button></div>
+ <div class="setup"><section class="sx"><div class="sxhead"><b>${sesc(title)}</b><span class="sxst">${sesc(d.lanmap)}</span></div>
+  <p>Знаешь, что это за устройство? Отправь заявку: LanMap научится его узнавать — у тебя и у других.
+   IP, MAC, подписи, имена сетей и серийные номера сюда не попадают. Проверь текст перед отправкой.</p>
+  ${d.names?`<label class="shname"><input type="checkbox" data-names> Добавить имя, которое устройство сообщает сети
+   <span class="muted">— часто это лучшая улика, но в нём бывает имя человека</span></label>`:''}
+  <textarea data-text></textarea>
+  <div class="lv"><button class="sbtn" data-shcopy>${sico('copy')}<span>Копировать</span></button>
+   <a class="sbtn" data-issue target="_blank" rel="noopener noreferrer">${sico('open')}<span>Открыть заявку на GitHub</span></a></div>
+  <p class="shhint muted"></p></section></div>`;
+ const ta=$('[data-text]',shdlg),cb=$('[data-names]',shdlg),a=$('[data-issue]',shdlg),hint=$('.shhint',shdlg);
+ const build=()=>{ta.value=d.text+(cb&&cb.checked?'\n'+d.names:'');link();};
+ const link=()=>{const q=new URLSearchParams({template:'device-identification.yml',lanmap:d.lanmap,evidence:ta.value});
+  const url=NEW_ISSUE+'?'+q.toString(),long=url.length>7500;
+  a.href=long?NEW_ISSUE+'?'+new URLSearchParams({template:'device-identification.yml',lanmap:d.lanmap}):url;
+  hint.textContent=long?'Текст длинный для ссылки: скопируй его и вставь в поле «Улики» в заявке.'
+   :'Заявка откроется с уже заполненными уликами. Останется написать, что это на самом деле.';};
+ build();ta.addEventListener('input',link);if(cb)cb.addEventListener('change',build);
+ $('[data-close]',shdlg).addEventListener('click',()=>shdlg.close());
+ $('[data-shcopy]',shdlg).addEventListener('click',async ev=>{const l=$('span',ev.currentTarget);
+  try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}
+  l.textContent='✓ скопировано';setTimeout(()=>l.textContent='Копировать',1500);});
+ shdlg.showModal();}
+$$('[data-share]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const t=b.closest('.tile');
+ const n=t&&$('.tmain b',t);shareOpen(JSON.parse(b.dataset.share),n?n.textContent:'');}));
 
 // всплывающие заметки: закрывать по клику мимо
 document.addEventListener('click',e=>{$$('details.pill[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});
