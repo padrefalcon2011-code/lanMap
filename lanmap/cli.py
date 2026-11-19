@@ -8,7 +8,7 @@ import webbrowser
 from pathlib import Path
 
 from lanmap import __version__, netinfo, oui, registry
-from lanmap.util import norm_mac, read_json
+from lanmap.util import data_dir, norm_mac, read_json
 
 
 def _utf8_console() -> None:
@@ -97,10 +97,14 @@ def cmd_build(args) -> int:
 
 def cmd_oui(args) -> int:
     if args.action == "update":
+        from lanmap import ops
         if not args.source:
             print(f"Скачиваю весь публичный реестр IEEE ({oui.IEEE_URL}). Твои MAC никуда не отправляются.")
-        path, count = oui.update(args.source)
-        print(f"База производителей обновлена: {path} ({count} записей)")
+        try:
+            count = ops.oui_update(args.source)["count"]
+        except ops.OpError as exc:
+            raise SystemExit(str(exc))
+        print(f"База производителей обновлена: {oui.oui_path()} ({count} записей)")
     else:
         print(f"{oui.oui_path()}: {'есть' if oui.available() else 'нет'}")
     return 0
@@ -212,6 +216,7 @@ def cmd_serve(args) -> int:
     httpd = server.make_server(args.port)
     url = server.url_for(httpd)
     print(f"LanMap: {url}")
+    print(f"Данные: {data_dir()}")
     print("Ссылка с ключом доступа действует, пока открыто это окно. Остановить — Ctrl+C.")
     if not netinfo.is_admin():
         print("Внимание: без прав администратора срез из интерфейса пропустит часть проверок.")
@@ -235,65 +240,39 @@ def ops_build(snap: Path) -> None:
         print(f"Не удалось пересобрать: {exc}")
 
 
-def _gateway() -> str:
-    net = _pick_network(None, True)
-    if not net.gateway:
-        raise SystemExit("Не найден шлюз (роутер) в выбранной сети")
-    return net.gateway
-
-
 def cmd_router(args) -> int:
     import getpass
-    from lanmap import credentials
-    from lanmap.routers import keenetic
-    host = args.host or _gateway()
-    target = keenetic.credential_target(host)
-    if args.action == "forget":
-        print("Удалено." if credentials.delete(target) else "Сохранённого входа не было.")
-        return 0
-    if args.action == "probe":
-        from lanmap.routers import probe
-        net = _pick_network(None, True)
-        print("Собираю, как роутер представляется (без пароля, только чтение)…", file=sys.stderr)
-        text = probe.to_markdown(probe.probe(net))
-        print(text, flush=True)
-        print("Скопируй текст выше в заявку: https://github.com/padrefalcon2011-code/lanMap/issues/new/choose",
-              file=sys.stderr)
-        return 0
-    product = keenetic.is_keenetic(host)
-    if not product:
-        raise SystemExit(f"По адресу {host} не отвечает Keenetic. Другие роутеры пока не поддерживаются.")
-    if args.action == "login":
-        print(f"Роутер {product} ({host}). Лучше отдельный пользователь с правами «Веб-конфигуратор» "
-              "и «Запретить сохранять настройки системы».")
-        user = input("Логин: ").strip()
-        password = getpass.getpass("Пароль (не отображается): ")
-        client = keenetic.KeeneticClient(host)
-        try:
-            client.login(user, password)
-        except keenetic.KeeneticError as exc:
-            raise SystemExit(f"Не получилось войти: {exc}")
-        credentials.save(target, user, password, comment=f"LanMap: роутер {product} {host}")
-        print("Вход проверен, пароль сохранён в диспетчере учётных данных Windows "
-              f"(запись LanMap:{target}). Проверь доступ: python -m lanmap router test")
-        return 0
-    # test: какие чтения доступны, без вывода личных данных
-    result = keenetic.collect(host)
-    if "login" in result["errors"]:
-        raise SystemExit(f"Вход: {result['errors']['login']}")
+    from lanmap import ops
+    try:
+        if args.action == "probe":
+            print("Собираю, как роутер представляется (без пароля, только чтение)…", file=sys.stderr)
+            print(ops.router_probe(), flush=True)
+            print("Скопируй текст выше в заявку: https://github.com/padrefalcon2011-code/lanMap/issues/new/choose",
+                  file=sys.stderr)
+            return 0
+        host = args.host or ops.gateway()
+        if args.action == "forget":
+            print("Удалено." if ops.router_forget(host) else "Сохранённого входа не было.")
+            return 0
+        status = ops.router_status(host)
+        if not status["kind"]:
+            raise SystemExit(f"Для роутера {host} пока нет модуля. Паспорт для заявки: python -m lanmap router probe")
+        product = status["product"]
+        if args.action == "login":
+            print(f"Роутер {product} ({host}). Лучше отдельный пользователь с правами «Веб-конфигуратор» "
+                  "и «Запретить сохранять настройки системы».")
+            user = input("Логин: ").strip()
+            password = getpass.getpass("Пароль (не отображается): ")
+            saved = ops.router_login(user, password, host)
+            print("Вход проверен, пароль сохранён в диспетчере учётных данных Windows "
+                  f"(запись {saved['target']}). Проверь доступ: python -m lanmap router test")
+            return 0
+        rows = ops.router_test(host)  # test: какие чтения доступны, без вывода личных данных
+    except ops.OpError as exc:
+        raise SystemExit(str(exc))
     print(f"Роутер {product} ({host}), вход выполнен. Что доступно для чтения:")
-    for name, path in keenetic.READS.items():
-        if name in result["errors"]:
-            print(f"  ✗ {name:15} {path:25} {result['errors'][name]}")
-            continue
-        value = result["data"][name]
-        if isinstance(value, dict):
-            size = f"ключей: {len(value)} ({', '.join(list(value)[:6])}{'…' if len(value) > 6 else ''})"
-        elif isinstance(value, list):
-            size = f"записей: {len(value)}"
-        else:
-            size = repr(value)[:60]
-        print(f"  ✓ {name:15} {path:25} {size}")
+    for r in rows:
+        print(f"  {'✓' if r['ok'] else '✗'} {r['name']:15} {r['path']:25} {r['info']}")
     return 0
 
 

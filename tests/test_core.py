@@ -1083,6 +1083,148 @@ class PresenceTest(unittest.TestCase):
             httpd.server_close()
 
 
+class PortableTest(unittest.TestCase):
+    """Переносимость: где лежат данные и база производителей из зеркала Wireshark."""
+
+    def test_data_next_to_program_unless_program_files(self):
+        from unittest import mock
+        from lanmap import util
+        with tempfile.TemporaryDirectory() as tmp:
+            root, local = Path(tmp) / "Мои программы" / "LanMap", Path(tmp) / "Local"
+            root.mkdir(parents=True)
+            env = {"LOCALAPPDATA": str(local), "ProgramFiles": str(Path(tmp) / "PF"), "ProgramW6432": "",
+                   "ProgramFiles(x86)": "", "windir": str(Path(tmp) / "Win")}
+            with mock.patch.dict(os.environ, env):
+                self.assertEqual(util._choose(root), root / "data")  # переносится вместе с папкой
+                pf = Path(tmp) / "PF" / "LanMap"
+                pf.mkdir(parents=True)
+                # в Program Files — всегда LOCALAPPDATA, даже если права администратора позволили бы писать
+                self.assertEqual(util._choose(pf), local / "LanMap" / "data")
+                self.assertFalse((pf / "data").exists())
+                with mock.patch.object(Path, "write_bytes", side_effect=PermissionError("только чтение")):
+                    self.assertEqual(util._choose(root), local / "LanMap" / "data")
+
+    def test_lanmap_data_env_wins(self):
+        from lanmap import util
+        self.assertEqual(util.data_dir(), Path(TMP.name))
+
+    def test_wireshark_manuf_to_ieee_format(self):
+        from lanmap import oui
+        manuf = ("# comment\n00:00:5E           \tICANN       \tICANN, IANA Department\n"
+                 "00:00:0C\tCisco\n00:1B:C5:00:00/36\tSmall       \tSmall Block Inc.\n")
+        table = dict(oui._LINE.findall(oui.from_manuf(manuf)))
+        self.assertEqual(table, {"00005E": "ICANN, IANA Department", "00000C": "Cisco"})
+
+
+class FakeRouterModule:
+    """Модуль роутера без сети: пароль «right» подходит, остальные нет."""
+    READS = {"clients": "show/ip/hotspot", "forwards": "show/upnp/redirect"}
+
+    @staticmethod
+    def credential_target(host):
+        return f"router:{host}"
+
+    @staticmethod
+    def check_login(host, user, password):
+        if password != "right":
+            raise ValueError("неверный логин или пароль")
+
+    @staticmethod
+    def collect(host):
+        return {"data": {"clients": [1, 2]}, "errors": {"forwards": "HTTP 403"}}
+
+
+class SetupApiTest(unittest.TestCase):
+    """Кнопки настройки веб-интерфейса: база производителей, вход в роутер, паспорт. Без сети и без настоящего
+    диспетчера учётных данных: модуль роутера, шлюз и credentials подменены."""
+
+    def setUp(self):
+        import threading
+        from unittest import mock
+        from lanmap import server
+        self.saved = {}
+        patches = [
+            mock.patch("lanmap.ops.gateway", return_value="192.0.2.1"),
+            mock.patch("lanmap.ops._router_module", return_value=(FakeRouterModule, ("fake", "Fake Router 1"))),
+            mock.patch("lanmap.credentials.save", side_effect=lambda t, u, p, comment="": self.saved.update({t: (u, p)})),
+            mock.patch("lanmap.credentials.load", side_effect=lambda t: self.saved.get(t)),
+            mock.patch("lanmap.credentials.delete", side_effect=lambda t: self.saved.pop(t, None) is not None),
+            mock.patch("lanmap.ops.oui_update", return_value={"count": 12345}),
+            mock.patch("lanmap.ops.router_probe", return_value="### Паспорт роутера\n- порты: 80"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.httpd = server.make_server(0, token="setup-token")
+        self.httpd.RequestHandlerClass.log_message = lambda *a: None
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+
+    def call(self, method, path, body=None, token="setup-token"):
+        import http.client
+        import json
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        hdrs = {"Host": f"127.0.0.1:{self.port}", "X-LanMap-Token": token}
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode()
+            hdrs["Content-Type"] = "application/json"
+        conn.request(method, path, body=data, headers=hdrs)
+        r = conn.getresponse()
+        text = r.read().decode("utf-8")
+        conn.close()
+        return r.status, json.loads(text), text
+
+    def wait_job(self, path):
+        import time
+        for _ in range(100):
+            code, j, _ = self.call("GET", path)
+            if not j.get("running"):
+                return j
+            time.sleep(0.02)
+        self.fail("фоновое действие не закончилось")
+
+    def test_router_login_saves_password_but_never_returns_it(self):
+        self.assertEqual(self.call("POST", "/api/router/login", {"user": "ro", "password": "right"}, token="x")[0], 403)
+        code, j, _ = self.call("GET", "/api/router")
+        self.assertEqual((code, j["kind"], j["login"]), (200, "fake", None))
+        code, j, text = self.call("POST", "/api/router/login", {"user": "ro", "password": "wrong-secret"})
+        self.assertEqual(code, 400)
+        self.assertNotIn("wrong-secret", text)
+        self.assertEqual(self.saved, {})
+        code, j, text = self.call("POST", "/api/router/login", {"user": " ro ", "password": "right"})
+        self.assertEqual(code, 200)
+        self.assertNotIn('"right"', text)
+        self.assertEqual(self.saved, {"router:192.0.2.1": ("ro", "right")})
+        self.assertEqual([(r["name"], r["ok"]) for r in j["reads"]], [("clients", True), ("forwards", False)])
+        self.assertEqual(self.call("GET", "/api/router")[1]["login"], "ro")
+        self.assertEqual(self.call("POST", "/api/router/login", {"user": "ro"})[0], 400)
+        code, j, _ = self.call("POST", "/api/router/forget", {})
+        self.assertEqual((code, j["removed"], self.saved), (200, True, {}))
+
+    def test_oui_and_probe_run_in_background(self):
+        code, j, _ = self.call("POST", "/api/oui", {})
+        self.assertIn(code, (202, 409))
+        self.assertEqual(self.wait_job("/api/oui")["result"], {"count": 12345})
+        self.assertEqual(self.call("POST", "/api/probe", {})[0], 202)
+        self.assertIn("Паспорт роутера", self.wait_job("/api/probe")["result"])
+
+    def test_first_run_page_has_setup(self):
+        import http.client
+        from unittest import mock
+        with mock.patch("lanmap.server._report_path", return_value=None):
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+            conn.request("GET", "/", headers={"Host": f"127.0.0.1:{self.port}",
+                                              "Cookie": f"lanmap_{self.port}=setup-token"})
+            page = conn.getresponse().read().decode("utf-8")
+            conn.close()
+        self.assertIn('window.LANMAP={"token": "setup-token"}', page)
+        self.assertIn("lanmapSetup.mount", page)
+        self.assertIn("Сделать первый срез", page)
+
+
 class NoNetworkSpecificsTest(unittest.TestCase):
     def test_no_control_characters(self):
         for path in list(PACKAGE_DIR.rglob("*.py")) + list(PACKAGE_DIR.rglob("*.json")):

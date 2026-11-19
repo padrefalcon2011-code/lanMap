@@ -99,6 +99,11 @@ class KeeneticClient:
             raise KeeneticError(f"{rci_path}: HTTP {exc.code}") from None
 
 
+def check_login(host: str, username: str, password: str) -> None:
+    """Проверить логин и пароль входом в роутер (только /auth). Ошибка — KeeneticError без пароля в тексте."""
+    KeeneticClient(host).login(username, password)
+
+
 def connect(host: str) -> KeeneticClient:
     cred = credentials.load(credential_target(host))
     if not cred:

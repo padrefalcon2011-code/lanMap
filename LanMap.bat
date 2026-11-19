@@ -16,12 +16,20 @@ echo Права не выданы, запускаю без них: часть п
 set LANMAP_NO_ADMIN=1
 
 :run
+rem Портативная сборка несёт свой Python в папке python, иначе — установленный.
+rem Без блоков в скобках: путь вроде «Program Files (x86)» их ломает.
+set "PY=%~dp0python\python.exe"
+if not exist "%PY%" goto system
+"%PY%" -m lanmap serve %*
+goto done
+:system
 set PY=python
 where python >nul 2>&1 || set PY=py -3
 %PY% -m lanmap serve %*
+:done
 rem Выключили кнопкой в интерфейсе — окно закрывается само; при ошибке ждёт, чтобы её можно было прочитать
-if errorlevel 1 (
-  echo.
-  echo LanMap остановился с ошибкой. Нужен Python 3.12+: https://www.python.org/downloads/
-  pause
-)
+if not errorlevel 1 exit /b 0
+echo.
+echo LanMap остановился с ошибкой.
+if not exist "%~dp0python\python.exe" echo Нужен Python 3.12+ (https://www.python.org/downloads/) или портативная сборка LanMap.
+pause

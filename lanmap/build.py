@@ -7,7 +7,7 @@ from pathlib import Path
 from lanmap import actions, changes, checklist, devices, identify, oui, registry, routers, security
 from lanmap.collectors import igd
 from lanmap.report import render
-from lanmap.util import now_iso, read_json, write_json
+from lanmap.util import data_dir, now_iso, read_json, write_json
 
 OFFLINE = "Сейчас не в сети (известны роутеру)"
 GROUP_ORDER = ["Сеть", "Компьютеры", "Хранилища", "Камеры", "ТВ и приставки", "Колонки", "Печать",
@@ -63,6 +63,7 @@ def make_model(snapshot: Path, reg: dict | None = None) -> dict:
         "snapshot": snapshot.name,
         "meta": meta,
         "oui_available": oui.available(),
+        "data_dir": str(data_dir()),
         "registry_drafts": sum(1 for e in reg["devices"].values() if not e.get("confirmed")),
         "router": routers.normalize(read_json(snapshot / "raw" / "router.json")),
         "router_skipped": (read_json(snapshot / "raw" / "router.json") or {}).get("skipped"),

@@ -15,7 +15,7 @@ from lanmap import forwards as fw_mod
 from lanmap import security as sec_mod
 from lanmap.devices import connection_text
 from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
-from lanmap.report_assets import CSS, ICONS, JS
+from lanmap.report_assets import CSS, ICONS, JS, SETUP_JS
 
 SOURCE_NAMES = {
     "registry": "реестр владельца", "upnp": "UPnP", "onvif": "ONVIF", "mdns": "mDNS", "netbios": "NetBIOS",
@@ -665,8 +665,10 @@ def _pills(model: dict) -> str:
     meta, router = model["meta"], model.get("router")
     pills = []
 
-    def pill(ico: str, short: str, text: str, cls: str = "") -> None:
-        pills.append(f'<details class="pill {cls}"><summary>{icon(ico, "s")}{e(short)}</summary><div>{e(text)}</div></details>')
+    def pill(ico: str, short: str, text: str, cls: str = "", setup: bool = False) -> None:
+        # setup — в веб-интерфейсе кнопка «Настроить» открывает окно настройки (база IEEE, вход в роутер)
+        btn = (f'<button class="sbtn live-only pillbtn" data-setup>{icon("gear", "s")}Настроить</button>' if setup else "")
+        pills.append(f'<details class="pill {cls}"><summary>{icon(ico, "s")}{e(short)}</summary><div>{e(text)}{btn}</div></details>')
 
     if router:
         clients = router["clients"]
@@ -674,18 +676,19 @@ def _pills(model: dict) -> str:
              f'Роутер {router.get("model") or ""}, прошивка {router.get("firmware") or "?"}: клиентов в списке '
              f'{len(clients)}, сейчас в сети {sum(1 for c in clients if c.get("active"))}. Данные только читаются.')
     elif model.get("router_skipped"):
-        pill("router", "роутер недоступен", f'Данные роутера недоступны: {model["router_skipped"]}', "warn")
+        pill("router", "роутер недоступен", f'Данные роутера недоступны: {model["router_skipped"]}', "warn", setup=True)
     if not meta.get("admin"):
         pill("alert", "без админа", "Срез сделан без прав администратора. Часть будущих проверок "
              "(параметры SMB этого компьютера, DISM) будет недоступна.", "warn")
     if not model.get("oui_available"):
         pill("alert", "нет базы IEEE", "Нет базы производителей IEEE (data/oui.txt): производитель по MAC не определяется. "
-             "Команда: python -m lanmap oui update", "warn")
+             "Команда: python -m lanmap oui update", "warn", setup=True)
     stages = meta.get("stages") or []
     duration = f'{stages[-1]["at_s"]:.0f} с' if stages else "?"
     pill("info", "о срезе", f'Интерфейс «{(meta.get("interface") or {}).get("alias", "?")}», компьютер '
          f'{meta.get("hostname", "?")}, проверено портов: {meta.get("ports_tested", "?")}, длительность {duration}. '
-         "Программа только читает сеть и ничего не меняет на устройствах.")
+         "Программа только читает сеть и ничего не меняет на устройствах."
+         + (f' Данные LanMap: {model["data_dir"]}' if model.get("data_dir") else ""))
     return f'<div class="pills">{"".join(pills)}</div>'
 
 
@@ -790,6 +793,7 @@ def render(model: dict) -> str:
     <span id="scanst" class="scanst" hidden></span>
     <button class="iconbtn live-only findbtn" id="find" {tip("Найти устройство: выключи или включи его — увидишь, какое это")}>{icon("search", "s")}<span>Найти устройство</span></button>
     <button class="iconbtn live-only scanbtn" id="scan" {tip("Сделать новый срез сети")}>{icon("refresh", "s")}<span>Срез</span></button>
+    <button class="iconbtn live-only tip-l" id="setup" {tip("Настройка: база производителей, вход в роутер, паспорт роутера")}>{icon("gear", "s")}</button>
     <button class="iconbtn tip-l" id="theme" {tip("Светлая / тёмная тема")}>{icon("sun", "s")}{icon("moon", "s")}</button>
     <button class="iconbtn live-only quitbtn tip-l" id="quit" {tip("Выключить LanMap и закрыть вкладку")}>{icon("power", "s")}</button>
   </div>
@@ -820,5 +824,48 @@ def render(model: dict) -> str:
 {_legend()}
 <footer>LanMap {e(meta.get('lanmap_version', ''))} · только чтение сети · отчёт содержит личные данные, не публикуй его</footer>
 </div>
-<script>{JS}</script>
+<script>{SETUP_JS}{JS}</script>
+</body></html>"""
+
+
+def empty_page() -> str:
+    """Первый запуск веб-интерфейса, срезов ещё нет: шаги «база → роутер → срез». Отдаёт только сервер."""
+    return f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LanMap — первый запуск</title>
+<style>{CSS}</style></head><body>
+{ICONS}
+<div class="first">
+<div class="top"><h1>{icon("devices", "l")}LanMap</h1><span class="spacer"></span>
+<button class="iconbtn quitbtn" id="quit" title="Выключить LanMap" aria-label="Выключить LanMap">{icon("power", "s")}</button></div>
+<p class="muted">Срезов ещё нет. Два шага настройки необязательны, но с ними устройства опознаются лучше.
+Программа только читает сеть и ничего не меняет на устройствах.</p>
+<div id="setupbox"></div>
+<div class="lv go"><button class="sbtn save" id="go">{icon("refresh", "s")}<span>Сделать первый срез</span></button>
+<span id="st" class="scanst"></span></div>
+</div>
+<script>{SETUP_JS}
+(function(){{const L=window.LANMAP;if(!L)return;
+window.lanmapSetup.mount(document.getElementById('setupbox'),true);
+const st=document.getElementById('st'),go=document.getElementById('go');
+async function poll(){{let j;try{{const r=await fetch('/api/scan',{{headers:{{'X-LanMap-Token':L.token}}}});j=await r.json();}}
+ catch(e){{st.className='scanst crit';st.textContent='сервер не отвечает';go.classList.remove('busy');return;}}
+ if(j.running){{go.classList.add('busy');st.className='scanst';st.textContent=j.stages.slice(-1)[0]||'начинаю…';setTimeout(poll,1500);return;}}
+ go.classList.remove('busy');
+ if(j.error){{st.className='scanst crit';st.textContent='срез не удался: '+j.error;st.title=j.error;}}
+ else if(j.snapshot)location.reload();}}
+go.addEventListener('click',async()=>{{const r=await fetch('/api/scan',{{method:'POST',
+ headers:{{'Content-Type':'application/json','X-LanMap-Token':L.token}},body:'{{}}'}});
+ if(!r.ok&&r.status!==409){{const j=await r.json().catch(()=>({{}}));st.className='scanst crit';st.textContent=j.error||('ошибка '+r.status);return;}}
+ poll();}});
+document.getElementById('quit').addEventListener('click',async()=>{{if(!confirm('Выключить LanMap?'))return;
+ const r=await fetch('/api/shutdown',{{method:'POST',headers:{{'Content-Type':'application/json','X-LanMap-Token':L.token}},body:'{{}}'}})
+  .catch(()=>null);
+ if(!r||!r.ok){{const j=r?await r.json().catch(()=>({{}})):{{}};st.className='scanst crit';st.textContent=j.error||'сервер не отвечает';return;}}
+ const bye=document.createElement('div');bye.className='bye';
+ bye.innerHTML='<div><b>LanMap выключен</b><span class="muted">Эту вкладку можно закрыть. Запустить снова — LanMap.bat</span></div>';
+ document.body.appendChild(bye);
+ setTimeout(()=>window.close(),300);}});
+poll();}})();
+</script>
 </body></html>"""

@@ -119,6 +119,36 @@ def _live_setup() -> dict:
             "router_note": None if poll else note, "name_new": name_new, "close": prober.close}
 
 
+class Job:
+    """Фоновое действие с ходом для страницы (скачать базу IEEE, собрать паспорт роутера): одно за раз."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.data = {"running": False, "error": None, "result": None}
+
+    def status(self) -> dict:
+        with self.lock:
+            return dict(self.data)
+
+    def start(self, fn) -> bool:
+        with self.lock:
+            if self.data["running"]:
+                return False
+            self.data = {"running": True, "error": None, "result": None, "started": time.time()}
+        threading.Thread(target=self._run, args=(fn,), daemon=True, name="lanmap-job").start()
+        return True
+
+    def _run(self, fn) -> None:
+        try:
+            out = {"result": fn()}
+        except ops.OpError as exc:
+            out = {"error": str(exc)}
+        except BaseException as exc:  # показать в интерфейсе, а не уронить поток молча
+            out = {"error": f"Ошибка LanMap: {exc or exc.__class__.__name__}"}
+        with self.lock:
+            self.data.update(out, running=False)
+
+
 class State:
     """Состояние сервера: токен, замок на запись в data/, ход среза, «Найти устройство»."""
 
@@ -130,6 +160,7 @@ class State:
         self.write_lock = threading.Lock()
         self.scan_lock = threading.Lock()
         self.scan = {"running": False, "stages": [], "error": None, "snapshot": None}
+        self.jobs = {"oui": Job(), "probe": Job()}
 
     def scan_status(self) -> dict:
         with self.scan_lock:
@@ -165,6 +196,10 @@ class State:
             if self.watcher:
                 self.watcher.stop.set()
 
+    def oui_update(self) -> dict:
+        with self.write_lock:
+            return ops.oui_update()
+
     def _step(self, text: str) -> None:
         with self.scan_lock:
             self.scan["stages"].append(text)
@@ -190,18 +225,6 @@ def _report_path() -> Path | None:
     from lanmap.scan import latest_snapshot
     snap = latest_snapshot(complete=True)
     return snap / "report.html" if snap and (snap / "report.html").exists() else None
-
-
-EMPTY_PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>LanMap</title>
-<style>body{font:16px system-ui,sans-serif;background:#f3f4f6;color:#1b1f27;display:grid;place-items:center;height:100vh;margin:0}
-button{font:inherit;padding:10px 20px;border-radius:10px;border:0;background:#2a78d6;color:#fff;cursor:pointer}
-@media (prefers-color-scheme:dark){body{background:#131518;color:#e8eaed}}</style></head>
-<body><div><p>Срезов ещё нет.</p><button id="go">Сделать первый срез</button><p id="st"></p></div>
-<script>const L=window.LANMAP,st=document.getElementById('st');
-async function poll(){const r=await fetch('/api/scan',{headers:{'X-LanMap-Token':L.token}});const j=await r.json();
- st.textContent=j.error||j.stages.slice(-1)[0]||'';if(j.running)setTimeout(poll,1500);else if(!j.error)location.reload();}
-document.getElementById('go').onclick=async()=>{await fetch('/api/scan',{method:'POST',
- headers:{'Content-Type':'application/json','X-LanMap-Token':L.token},body:'{}'});poll();};</script></body></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -278,15 +301,32 @@ class Handler(BaseHTTPRequestHandler):
             if not self._cookie_ok():
                 return self._text(403, "Нет доступа. Открой ссылку, которую напечатал python -m lanmap serve.")
             return self._page()
-        if url.path in ("/api/scan", "/api/watch"):
+        if url.path.startswith("/api/"):
             if not self._header_ok():
                 return self._json(403, {"error": "нет доступа"})
-            return self._json(200, self.state.scan_status() if url.path == "/api/scan" else self.state.watch_state())
+            if url.path == "/api/scan":
+                return self._json(200, self.state.scan_status())
+            if url.path == "/api/watch":
+                return self._json(200, self.state.watch_state())
+            if url.path == "/api/oui":
+                return self._json(200, {**ops.oui_status(), **self.state.jobs["oui"].status()})
+            if url.path == "/api/probe":
+                return self._json(200, self.state.jobs["probe"].status())
+            if url.path == "/api/router":
+                try:
+                    return self._json(200, ops.router_status())
+                except ops.OpError as exc:
+                    return self._json(400, {"error": str(exc)})
+            return self._json(404, {"error": "не найдено"})
         self._text(404, "не найдено")
 
     def _page(self) -> None:
         path = _report_path()
-        html = path.read_text("utf-8") if path else EMPTY_PAGE
+        if path:
+            html = path.read_text("utf-8")
+        else:
+            from lanmap.report import empty_page
+            html = empty_page()
         boot = f"<script>window.LANMAP={json.dumps({'token': self.state.token})};</script>"
         html = html.replace("<head>", "<head>" + boot, 1) if "<head>" in html else boot + html
         self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
@@ -325,6 +365,23 @@ class Handler(BaseHTTPRequestHandler):
                 self.state.stop_watch()
                 return self._json(200, {"status": "stopping"})
             return self._json(202, self.state.start_watch().state())
+        if route in ("/api/oui", "/api/probe"):
+            if self.state.scan_status()["running"]:
+                return self._json(409, {"error": "Идёт срез — подожди, пока он закончится"})
+            job = self.state.jobs[route[5:]]
+            started = job.start(self.state.oui_update if route == "/api/oui" else ops.router_probe)
+            return self._json(202 if started else 409, job.status())
+        if route == "/api/router/login":
+            return self._router_login(body)
+        if route == "/api/router/forget":
+            try:
+                removed = ops.router_forget()
+            except ops.OpError as exc:
+                return self._json(400, {"error": str(exc)})
+            except OSError as exc:
+                return self._json(500, {"error": f"Ошибка LanMap: {exc}"})
+            self.state.stop_watch()  # «Найти устройство» перезапустится уже без роутера
+            return self._json(200, {"ok": True, "removed": removed})
         action = {"/api/sign": self._sign, "/api/finding": self._finding, "/api/check": self._check}.get(route)
         if not action:
             return self._json(404, {"error": "не найдено"})
@@ -339,6 +396,25 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # иначе соединение просто рвётся, и страница решит, что сервер закрыт
             return self._json(500, {"error": f"Ошибка LanMap: {exc}"})
         self._json(200, {"ok": True, **result})
+
+    def _router_login(self, body: dict) -> None:
+        """Пароль из формы проверяется входом в роутер и уходит в диспетчер учётных данных Windows. Он не
+        пишется в журнал (тела запросов не журналируются), не возвращается и не попадает в текст ошибки."""
+        user, password = body.get("user"), body.get("password")
+        if not isinstance(user, str) or not isinstance(password, str) or not user.strip() or not password                 or len(user) > 200 or len(password) > 500:
+            return self._json(400, {"error": "Нужны логин и пароль"})
+        try:
+            saved = ops.router_login(user.strip(), password)
+        except ops.OpError as exc:
+            return self._json(400, {"error": str(exc)})
+        except Exception as exc:  # текст ошибки не показываем: мало ли что в нём окажется
+            return self._json(500, {"error": f"Ошибка LanMap при входе в роутер ({exc.__class__.__name__})"})
+        self.state.stop_watch()  # «Найти устройство» перезапустится уже с роутером
+        try:
+            reads = ops.router_test(saved["host"])
+        except Exception:
+            reads = []
+        return self._json(200, {"ok": True, **saved, "reads": reads})
 
     @staticmethod
     def _str(body: dict, name: str, required: bool = True) -> str | None:

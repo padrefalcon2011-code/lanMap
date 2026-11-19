@@ -53,6 +53,8 @@ ICONS = r"""<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
 <symbol id="i-cash" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9.5v0.01M18 14.5v0.01"/></symbol>
 <symbol id="i-bot" viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4.5M12 4.5h0.01M9.5 13v1M14.5 13v1M2.5 12.5v3M21.5 12.5v3"/></symbol>
 <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
 </defs></svg>""".replace("{DEVICE_ICONS}", DEVICE_ICONS)
 
 CSS = r"""
@@ -358,6 +360,34 @@ main.list .thead{grid-template-columns:auto 1fr auto;grid-template-areas:"icon m
 .toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,20px);background:var(--crit);color:#fff;padding:10px 16px;
  border-radius:12px;opacity:0;pointer-events:none;transition:.2s;z-index:50;max-width:90vw;font-size:14px}
 .toast.on{opacity:1;transform:translate(-50%,0)}
+/* настройка: база производителей, вход в роутер, паспорт роутера */
+dialog.setupdlg{border:0;border-radius:16px;padding:0;background:var(--bg);color:var(--fg);width:min(640px,calc(100vw - 32px));
+ max-height:calc(100vh - 32px);box-shadow:0 20px 60px rgba(0,0,0,.35)}
+dialog.setupdlg::backdrop{background:rgba(0,0,0,.45)}
+.setupdlg .dh{display:flex;align-items:center;gap:10px;padding:14px 16px 0}.setupdlg .dh h2{margin:0;font-size:18px;flex:1;
+ display:flex;align-items:center;gap:8px}
+.setup{display:grid;gap:10px;padding:14px 16px 16px}
+.sx{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.sxhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sxico{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--chip);color:var(--muted);flex:none}
+.sxico svg.i{width:24px;height:24px}
+.sx.ok .sxico{background:color-mix(in srgb,var(--good) 16%,transparent);color:var(--good)}
+.sx.warn .sxico{background:var(--warn-soft);color:var(--warn)}
+.sxhead b{font-size:15px}.sxst{font-size:12px;color:var(--muted)}.sx.ok .sxst{color:var(--good)}.sx.warn .sxst{color:var(--warn-text)}
+.sxn{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700}
+.sx p{margin:8px 0 0;font-size:13px;color:var(--muted)}
+.sx .err{color:var(--crit)}
+.sxlogin[hidden]{display:none}.sxlogin p{margin-top:6px}
+.sx form.lv input{flex:1 1 140px}
+.sx textarea{width:100%;min-height:150px;margin-top:8px;font:12px/1.4 ui-monospace,Consolas,monospace;padding:8px;border-radius:10px;
+ border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:vertical}
+.reads{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}.reads span{display:inline-flex;align-items:center;gap:3px;font-size:12px;
+ padding:2px 8px;border-radius:999px;background:var(--chip)}.reads span.no{color:var(--crit)}
+.sbtn.busy svg{animation:spin 1s linear infinite}
+a.sbtn{text-decoration:none}
+.pillbtn{margin-top:8px}
+.first{max-width:680px;margin:6vh auto;padding:0 16px}.first h1{display:flex;align-items:center;gap:10px;font-size:22px}
+.first .go{margin:4px 16px 0}.first .sbtn.save{font-size:15px;padding:10px 18px}
 /* «Найти устройство» */
 .findbtn{border-color:var(--accent);color:var(--accent);font-weight:600}
 .quitbtn:hover{border-color:var(--crit);color:var(--crit)}
@@ -603,6 +633,10 @@ if(L){
  if(fb)fb.addEventListener('click',fOpen);
  try{if(sessionStorage.getItem('lanmap.finder'))fOpen();}catch(e){}
 
+ // настройка: шестерёнка в шапке и кнопки в плашках «нет базы IEEE», «роутер недоступен»
+ const sg=$('#setup');if(sg&&window.lanmapSetup)sg.addEventListener('click',()=>window.lanmapSetup.open());
+ $$('[data-setup]').forEach(b=>b.addEventListener('click',e=>{e.preventDefault();window.lanmapSetup&&window.lanmapSetup.open();}));
+
  // выключить: сервер останавливается, вкладка закрывается (если браузер разрешит — иначе подсказка)
  const qb=$('#quit');
  if(qb)qb.addEventListener('click',async()=>{if(!confirm('Выключить LanMap?'))return;
@@ -618,5 +652,108 @@ if(L){
    for(let p=el;p;p=p.parentElement){if(p.tagName==='DETAILS')p.open=true;if(p.classList&&p.classList.contains('tile'))openTile(p,true);}}
   scrollTo(0,bk.y||0);}
 }
+})();
+"""
+
+
+# Настройка (только в веб-интерфейсе): база производителей, вход в роутер, паспорт роутера для заявки.
+# Общая для пустой первой страницы (встроена в неё) и отчёта (окно по шестерёнке). Без сервера не запускается.
+SETUP_JS = r"""
+window.lanmapSetup=(function(){
+const L=window.LANMAP;if(!L)return null;
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const ico=n=>`<svg class="i s" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ISSUE='https://github.com/padrefalcon2011-code/lanMap/issues/new/choose';
+async function call(path,body){const o={headers:{'X-LanMap-Token':L.token}};
+ if(body!==undefined){o.method='POST';o.headers['Content-Type']='application/json';o.body=JSON.stringify(body);}
+ let r;try{r=await fetch(path,o);}catch(e){throw new Error('Сервер LanMap не отвечает: окно LanMap закрыто?');}
+ const j=await r.json().catch(()=>({}));if(!r.ok&&!j.running)throw new Error(j.error||('ошибка '+r.status));return j;}
+let dirty=false,dlg=null;
+
+function mount(box,numbered){
+ const n=i=>numbered?`<span class="sxn">${i}</span>`:'';
+ box.classList.add('setup');
+ box.innerHTML=`
+ <section class="sx" id="st-oui"><div class="sxhead">${n(1)}<span class="sxico">${ico('barcode')}</span><b>База производителей</b>
+   <span class="sxst"></span></div>
+  <p>По MAC видно, кто сделал устройство. Скачивается весь публичный реестр IEEE (3–6 МБ): твои MAC никуда не уходят.</p>
+  <div class="lv"><button class="sbtn" data-oui>${ico('download')}<span>Скачать</span></button><span class="sxmsg"></span></div></section>
+ <section class="sx" id="st-router"><div class="sxhead">${n(2)}<span class="sxico">${ico('key')}</span><b>Роутер</b>
+   <span class="sxst">ищу…</span></div><div class="sxbody"></div></section>
+ <section class="sx" id="st-probe"><div class="sxhead"><span class="sxico">${ico('router')}</span><b>Паспорт роутера</b>
+   <span class="sxst"></span></div>
+  <p>Для роутера нет модуля? Собери обезличенный паспорт и отправь заявку: модуль добавят. Без пароля, только чтение.</p>
+  <div class="lv"><button class="sbtn" data-probe>${ico('search')}<span>Собрать</span></button></div><div class="probeout"></div></section>`;
+ ouiInit(box);routerInit(box);probeInit(box);}
+
+// --- база производителей -------------------------------------------------------------------
+function ouiShow(box,j){const st=$('#st-oui',box),b=$('[data-oui]',st),msg=$('.sxmsg',st);
+ st.className='sx '+(j.available?'ok':'warn');
+ $('.sxst',st).textContent=j.available?`есть · ${Number(j.count).toLocaleString('ru-RU')} записей`:'нет';
+ $('span',b).textContent=j.running?'скачиваю…':(j.available?'Обновить':'Скачать');b.classList.toggle('busy',!!j.running);
+ msg.className='sxmsg '+(j.error?'err':'muted');msg.textContent=j.error||'';}
+async function ouiPoll(box,watching){let j;try{j=await call('/api/oui');}catch(e){return;}
+ ouiShow(box,j);if(j.running){setTimeout(()=>ouiPoll(box,true),1500);return;}
+ if(watching&&!j.error)dirty=true;}
+function ouiInit(box){$('[data-oui]',box).addEventListener('click',async()=>{
+  try{await call('/api/oui',{});}catch(e){const m=$('#st-oui .sxmsg',box);m.className='sxmsg err';m.textContent=e.message;return;}
+  ouiPoll(box,true);});
+ ouiPoll(box,false);}
+
+// --- роутер: вход только для чтения, пароль уходит в диспетчер учётных данных Windows -------
+function routerShow(box,j,extra){const st=$('#st-router',box),body=$('.sxbody',st);
+ if(j.error&&!j.host){st.className='sx warn';$('.sxst',st).textContent='';body.innerHTML=`<p class="err">${esc(j.error)}</p>`;return;}
+ if(!j.kind){st.className='sx warn';$('.sxst',st).textContent=`${j.host} · модуля нет`;
+  body.innerHTML=`<p>LanMap работает на сканировании, без данных роутера. Помоги добавить модуль: собери паспорт ниже.</p>`;return;}
+ const has=!!j.login;st.className='sx '+(has?'ok':'warn');
+ $('.sxst',st).textContent=`${j.product||j.kind} · ${j.host}`+(has?` · вход: ${j.login}`:' · вход не настроен');
+ body.innerHTML=(has?`<div class="lv"><button class="sbtn" data-relogin>${ico('key')}Войти заново</button>
+   <button class="sbtn" data-forget>${ico('x')}Забыть пароль</button></div>`:'')
+  +`<div class="sxlogin" ${has?'hidden':''}><form class="lv" autocomplete="on"><input name="user" autocomplete="username" placeholder="логин" maxlength="200" required>
+   <input name="password" type="password" autocomplete="current-password" placeholder="пароль" maxlength="500" required>
+   <button class="sbtn save" type="submit">${ico('check')}<span>Войти</span></button></form>
+  <p>Лучше отдельный пользователь роутера с правами «Веб-конфигуратор» и «Запретить сохранять настройки системы».
+   Пароль хранится в диспетчере учётных данных Windows, не в папке LanMap.</p></div><p class="sxmsg"></p>`+(extra||'');
+ const form=$('form',body),msg=$('.sxmsg',body);
+ $('[data-relogin]',body)?.addEventListener('click',()=>{$('.sxlogin',body).hidden=false;$('input',form).focus();});
+ $('[data-forget]',body)?.addEventListener('click',async e=>{if(!confirm('Забыть пароль роутера?'))return;
+  try{await call('/api/router/forget',{});routerLoad(box);}catch(err){msg.className='sxmsg err';msg.textContent=err.message;}});
+ form.addEventListener('submit',async e=>{e.preventDefault();const btn=$('button',form),pw=form.password;
+  btn.classList.add('busy');msg.className='sxmsg muted';msg.textContent='вхожу…';
+  try{const r=await call('/api/router/login',{user:form.user.value.trim(),password:pw.value});pw.value='';
+   const reads=(r.reads||[]).map(x=>`<span class="${x.ok?'':'no'}" title="${esc(x.path+': '+x.info)}">${ico(x.ok?'check':'x')}${esc(x.name)}</span>`).join('');
+   routerShow(box,r,`<p class="muted">Вход проверен. Что роутер даёт прочитать:</p><div class="reads">${reads}</div>
+    <p class="muted">Данные роутера появятся в следующем срезе.</p>`);}
+  catch(err){pw.value='';msg.className='sxmsg err';msg.textContent=err.message;btn.classList.remove('busy');pw.focus();}});}
+async function routerLoad(box){try{routerShow(box,await call('/api/router'));}catch(e){routerShow(box,{error:e.message});}}
+function routerInit(box){routerLoad(box);}
+
+// --- паспорт роутера для заявки ------------------------------------------------------------
+function probeShow(box,j){const st=$('#st-probe',box),b=$('[data-probe]',st),out=$('.probeout',st);
+ b.classList.toggle('busy',!!j.running);$('span',b).textContent=j.running?'собираю… (~10 с)':(j.result?'Собрать заново':'Собрать');
+ if(j.error){out.innerHTML=`<p class="err">${esc(j.error)}</p>`;return;}
+ if(!j.result){out.innerHTML='';return;}
+ st.className='sx ok';
+ out.innerHTML=`<textarea readonly>${esc(j.result)}</textarea><div class="lv"><button class="sbtn" data-copy>${ico('copy')}<span>Копировать</span></button>
+  <a class="sbtn" href="${ISSUE}" target="_blank" rel="noopener noreferrer">${ico('open')}Открыть заявку на GitHub</a></div>
+  <p>IP, MAC и серийные номера вырезаны автоматически. Проверь текст перед отправкой.</p>`;
+ $('[data-copy]',out).addEventListener('click',async ev=>{const t=$('textarea',out),l=$('span',ev.currentTarget);
+  try{await navigator.clipboard.writeText(t.value);}catch(e){t.select();document.execCommand('copy');}
+  l.textContent='✓ скопировано';setTimeout(()=>l.textContent='Копировать',1500);});}
+async function probePoll(box){let j;try{j=await call('/api/probe');}catch(e){return;}
+ probeShow(box,j);if(j.running)setTimeout(()=>probePoll(box),1500);}
+function probeInit(box){$('[data-probe]',box).addEventListener('click',async()=>{
+  try{await call('/api/probe',{});}catch(e){$('#st-probe .probeout',box).innerHTML=`<p class="err">${esc(e.message)}</p>`;return;}
+  probePoll(box);});
+ probePoll(box);}
+
+function open(){if(!dlg){dlg=document.createElement('dialog');dlg.className='setupdlg';
+  dlg.innerHTML=`<div class="dh"><h2>${ico('gear')}Настройка</h2><button class="iconbtn" data-close title="Закрыть">${ico('x')}</button></div><div></div>`;
+  document.body.appendChild(dlg);$('[data-close]',dlg).addEventListener('click',()=>dlg.close());
+  dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
+  dlg.addEventListener('close',()=>{if(dirty){dirty=false;try{sessionStorage.setItem('lanmap.back',JSON.stringify({y:scrollY}))}catch(e){}location.reload();}});}
+ mount(dlg.lastElementChild,false);dlg.showModal();}
+return {mount,open};
 })();
 """

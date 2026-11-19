@@ -1,7 +1,8 @@
 """Действия владельца над последним срезом: подписать устройство, отметить находку или критерий чек-листа.
 
 Общие для командной строки и локального веб-интерфейса. Пишут только в data/ (реестр, findings.json,
-checklist.json) и пересобирают отчёт; сеть и устройства не трогают.
+checklist.json, oui.txt) и пересобирают отчёт; сеть и устройства не трогают. Вход в роутер — только
+проверка логина и чтение, пароль уходит в диспетчер учётных данных Windows.
 """
 from __future__ import annotations
 
@@ -105,3 +106,106 @@ def set_check(code: str, status: str, note: str | None = None) -> dict:
         return checklist.set_mark(code, status, note or None)
     except ValueError as exc:
         raise OpError(str(exc)) from exc
+
+
+def gateway() -> str:
+    net = pick_network(allow_large=True)
+    if not net.gateway:
+        raise OpError("Не найден шлюз (роутер) в выбранной сети")
+    return net.gateway
+
+
+def oui_status() -> dict:
+    from lanmap import oui
+    return {"available": oui.available(), "count": oui.count()}
+
+
+def oui_update(source: str | None = None) -> dict:
+    """Скачать весь публичный реестр IEEE (MAC-адреса никуда не уходят) и пересобрать отчёт."""
+    from lanmap import oui
+    try:
+        _, count = oui.update(source)
+    except (OSError, ValueError) as exc:
+        raise OpError(f"Не удалось обновить базу производителей: {exc}") from exc
+    try:
+        rebuild()
+    except OpError:  # срезов ещё нет — пересобирать нечего
+        pass
+    return {"count": count}
+
+
+def _router_module(host: str):
+    from lanmap import routers
+    found = routers.detect(host)
+    if not found:
+        return None, None
+    return routers.MODULES[found[0]], found
+
+
+def router_status(host: str | None = None) -> dict:
+    """Что за роутер и настроен ли вход. Без пароля: роутер только спрашивают, как он представляется."""
+    from lanmap import credentials
+    host = host or gateway()
+    module, found = _router_module(host)
+    if not module:
+        return {"host": host, "kind": None, "product": None, "login": None}
+    saved = credentials.load(module.credential_target(host))
+    return {"host": host, "kind": found[0], "product": found[1], "login": saved[0] if saved else None}
+
+
+def router_test(host: str) -> list[dict]:
+    """Какие чтения роутера доступны: имя, путь, ок или ошибка, размер. Без личных данных."""
+    module, found = _router_module(host)
+    if not module:
+        raise OpError("Для этого роутера пока нет модуля")
+    result = module.collect(host)
+    if "login" in result["errors"]:
+        raise OpError(f"Вход: {result['errors']['login']}")
+    rows = []
+    for name, path in getattr(module, "READS", {}).items():
+        if name in result["errors"]:
+            rows.append({"name": name, "path": path, "ok": False, "info": result["errors"][name]})
+            continue
+        value = result["data"].get(name)
+        if isinstance(value, dict):
+            info = f"ключей: {len(value)}"
+        elif isinstance(value, list):
+            info = f"записей: {len(value)}"
+        else:
+            info = repr(value)[:60]
+        rows.append({"name": name, "path": path, "ok": True, "info": info})
+    return rows
+
+
+def router_login(username: str, password: str, host: str | None = None) -> dict:
+    """Проверить вход и сохранить его в диспетчере учётных данных Windows. Пароль не попадает ни в файлы,
+    ни в ответ, ни в текст ошибки."""
+    from lanmap import credentials
+    host = host or gateway()
+    module, found = _router_module(host)
+    if not module:
+        raise OpError("Для этого роутера пока нет модуля. Собери паспорт роутера и отправь заявку.")
+    if not username or not password:
+        raise OpError("Нужны логин и пароль")
+    try:
+        module.check_login(host, username, password)
+    except Exception as exc:
+        raise OpError(f"Не получилось войти: {exc}") from None
+    credentials.save(module.credential_target(host), username, password,
+                     comment=f"LanMap: роутер {found[1]} {host}")
+    return {"host": host, "kind": found[0], "product": found[1], "login": username,
+            "target": "LanMap:" + module.credential_target(host)}
+
+
+def router_forget(host: str | None = None) -> bool:
+    from lanmap import credentials
+    host = host or gateway()
+    module, _ = _router_module(host)
+    target = module.credential_target(host) if module else f"router:{host}"
+    return credentials.delete(target)
+
+
+def router_probe() -> str:
+    """Обезличенный паспорт роутера для заявки на модуль (markdown). Без пароля, только чтение."""
+    from lanmap.routers import probe
+    return probe.to_markdown(probe.probe(pick_network(allow_large=True)))

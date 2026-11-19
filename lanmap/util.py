@@ -12,10 +12,50 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 REPO_DIR = PACKAGE_DIR.parent
 
 
+_CHOSEN: Path | None = None  # где лежат данные, решается один раз за запуск
+
+
+def _protected(root: Path) -> bool:
+    """Папка программы в Program Files или Windows. Туда пишет только администратор, поэтому от того,
+    как запустили программу, зависело бы, куда попадут данные. Такие папки не используем вовсе."""
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "windir"):
+        base = os.environ.get(var)
+        if base and root.resolve().is_relative_to(Path(base).resolve()):
+            return True
+    return False
+
+
+def local_data_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA")
+    return (Path(base) if base else Path.home() / "AppData" / "Local") / "LanMap" / "data"
+
+
+def _choose(root: Path) -> Path:
+    """`data/` рядом с программой (переезжает вместе с папкой). Если программа лежит в Program Files или
+    папку нельзя записать (флешка только для чтения) — %LOCALAPPDATA%/LanMap/data."""
+    if _protected(root):
+        return local_data_dir()
+    path = root / "data"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        test = path / ".write-test"
+        test.write_bytes(b"")
+        test.unlink()
+        return path
+    except OSError:
+        return local_data_dir()
+
+
 def data_dir() -> Path:
-    """Папка личных данных. По умолчанию `data/` рядом с пакетом, можно переопределить LANMAP_DATA."""
+    """Папка личных данных: LANMAP_DATA, иначе `data/` рядом с программой, иначе %LOCALAPPDATA%."""
+    global _CHOSEN
     custom = os.environ.get("LANMAP_DATA")
-    path = Path(custom) if custom else REPO_DIR / "data"
+    if custom:
+        path = Path(custom)
+    else:
+        if _CHOSEN is None:
+            _CHOSEN = _choose(REPO_DIR)
+        path = _CHOSEN
     path.mkdir(parents=True, exist_ok=True)
     return path
 
