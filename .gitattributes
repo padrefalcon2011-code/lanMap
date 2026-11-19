@@ -1,0 +1,2 @@
+# Пакетные файлы Windows — только с CRLF, иначе cmd путает строки
+*.bat text eol=crlf
