@@ -168,7 +168,10 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
     return snap
 
 
-def latest_snapshot() -> Path | None:
-    snaps = sorted(p for p in snapshots_dir().iterdir() if p.is_dir() and (p / "meta.json").exists()
+def latest_snapshot(complete: bool = False) -> Path | None:
+    """Последний срез. complete — только собранный (есть devices.json): прерванный срез оставляет папку без него,
+    и отметки владельца не должны уходить туда."""
+    need = "devices.json" if complete else "meta.json"
+    snaps = sorted(p for p in snapshots_dir().iterdir() if p.is_dir() and (p / need).exists()
                    and re.match(r"\d{4}-\d\d-\d\d_", p.name))
     return snaps[-1] if snaps else None

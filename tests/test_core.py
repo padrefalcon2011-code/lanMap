@@ -883,6 +883,20 @@ class ServerTest(unittest.TestCase):
         model = read_json(self.snap / "devices.json")  # отчёт пересобран
         self.assertEqual(next(d for d in model["devices"] if d["key"] == MAC_B)["title"], "Тестовая камера")
 
+    def test_interrupted_scan_is_ignored(self):
+        """Прерванный срез (папка только с meta.json) не забирает ни страницу, ни отметки."""
+        import shutil
+        broken = self.snap.parent / "2026-01-02_000000"
+        write_json(broken / "meta.json", {"interface": {}})
+        try:
+            self.assertEqual(self.api("/api/check", {"code": "E6", "status": "done"})[0], 200)
+            self.assertFalse((broken / "devices.json").exists())
+            self.assertEqual(read_json(self.snap / "devices.json")["snapshot"], self.snap.name)
+            from lanmap import server
+            self.assertEqual(server._report_path(), self.snap / "report.html")
+        finally:
+            shutil.rmtree(broken)
+
 
 class NoNetworkSpecificsTest(unittest.TestCase):
     def test_no_control_characters(self):

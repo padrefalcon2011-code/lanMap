@@ -27,7 +27,7 @@ def _pick_network(index: int | None, allow_large: bool) -> netinfo.LocalNet:
         raise SystemExit(str(exc))
 
 
-def _snapshot_arg(value: str | None) -> Path:
+def _snapshot_arg(value: str | None, complete: bool = False) -> Path:
     from lanmap.scan import latest_snapshot, snapshots_dir
     if value:
         path = Path(value)
@@ -36,7 +36,7 @@ def _snapshot_arg(value: str | None) -> Path:
         if not (path / "meta.json").exists():
             raise SystemExit(f"Не найден срез: {value}")
         return path
-    latest = latest_snapshot()
+    latest = latest_snapshot(complete)
     if not latest:
         raise SystemExit("Срезов ещё нет. Сначала: python -m lanmap scan")
     return latest
@@ -47,7 +47,7 @@ def _resolve_mac(target: str) -> str:
     if mac and "." not in target:
         return f"{mac}#{target.partition('#')[2]}" if "#" in target else mac
     from lanmap.scan import latest_snapshot
-    snap = latest_snapshot()
+    snap = latest_snapshot(complete=True)
     model = read_json(snap / "devices.json", {}) if snap else {}
     for dev in model.get("devices", []):
         if target in dev["ips"] and dev.get("mac"):
@@ -142,7 +142,7 @@ def cmd_confirm(args) -> int:
 
 def cmd_finding(args) -> int:
     from lanmap import security
-    snap = _snapshot_arg(None)
+    snap = _snapshot_arg(None, complete=True)
     model = read_json(snap / "devices.json", {}) or {}
     sec = model.get("security")
     if sec is None:
@@ -176,7 +176,7 @@ def cmd_finding(args) -> int:
 
 def cmd_check(args) -> int:
     from lanmap import checklist
-    snap = _snapshot_arg(None)
+    snap = _snapshot_arg(None, complete=True)
     if args.action == "list":
         model = read_json(snap / "devices.json", {}) or {}
         cl = model.get("checklist")
@@ -205,8 +205,8 @@ def cmd_check(args) -> int:
 def cmd_serve(args) -> int:
     from lanmap import server
     from lanmap.scan import latest_snapshot
-    snap = latest_snapshot()
-    if snap and (snap / "devices.json").exists():
+    snap = latest_snapshot(complete=True)
+    if snap:
         print("Пересобираю отчёт последнего среза текущими правилами…")
         ops_build(snap)
     httpd = server.make_server(args.port)

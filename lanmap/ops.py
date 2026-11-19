@@ -36,9 +36,9 @@ def pick_network(index: int | None = None, allow_large: bool = False) -> netinfo
 def latest() -> tuple[Path, dict]:
     """Последний срез и его модель (devices.json)."""
     from lanmap.scan import latest_snapshot
-    snap = latest_snapshot()
+    snap = latest_snapshot(complete=True)
     if not snap:
-        raise OpError("Срезов ещё нет. Сначала: python -m lanmap scan")
+        raise OpError("Готовых срезов ещё нет. Сначала: python -m lanmap scan")
     return snap, read_json(snap / "devices.json", {}) or {}
 
 

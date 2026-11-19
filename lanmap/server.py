@@ -68,10 +68,10 @@ class State:
 
 
 def _report_path() -> Path | None:
-    """Отчёт последнего готового среза (во время нового среза его папка ещё без отчёта)."""
-    from lanmap.scan import snapshots_dir
-    done = sorted(p for p in snapshots_dir().iterdir() if (p / "report.html").exists())
-    return done[-1] / "report.html" if done else None
+    """Отчёт последнего собранного среза — того же, в который пишут кнопки (ops.latest)."""
+    from lanmap.scan import latest_snapshot
+    snap = latest_snapshot(complete=True)
+    return snap / "report.html" if snap and (snap / "report.html").exists() else None
 
 
 EMPTY_PAGE = """<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>LanMap</title>
@@ -205,6 +205,8 @@ class Handler(BaseHTTPRequestHandler):
                 ops.rebuild()
         except ops.OpError as exc:
             return self._json(400, {"error": str(exc)})
+        except Exception as exc:  # иначе соединение просто рвётся, и страница решит, что сервер закрыт
+            return self._json(500, {"error": f"Ошибка LanMap: {exc}"})
         self._json(200, {"ok": True, **result})
 
     @staticmethod
