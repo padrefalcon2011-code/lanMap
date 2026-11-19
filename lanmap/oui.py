@@ -2,7 +2,7 @@
 
 База хранится локально в data/oui.txt. Скачивается только по явной команде (`lanmap oui update` или кнопка
 в веб-интерфейсе): MAC-адреса никуда не отправляются, загружается весь публичный реестр целиком. IEEE
-отвечает программам кодом 418, поэтому запасной источник — тот же реестр в зеркале Wireshark (файл manuf,
+иногда отвечает программам кодом 418 или заглушкой, поэтому запасной источник — тот же реестр в зеркале Wireshark (файл manuf,
 выложен для автоматической загрузки); он переводится в формат IEEE, остальная программа разницы не видит.
 """
 from __future__ import annotations
@@ -83,24 +83,31 @@ def from_manuf(text: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _check(path: Path) -> None:
+    count = len(_LINE.findall(path.read_text("utf-8", "replace")))
+    if count < 1000:
+        path.unlink(missing_ok=True)
+        raise ValueError(f"файл не похож на базу IEEE OUI (записей: {count})")
+
+
 def update(source: str | None = None) -> tuple[Path, int]:
     """Обновить базу: из локального файла (source) или скачать весь реестр IEEE."""
     dest = oui_path()
     tmp = dest.with_suffix(".download")
     if source:
         shutil.copyfile(source, tmp)
+        _check(tmp)
     else:
-        try:
+        try:  # IEEE может ответить 418 или страницей-заглушкой вместо файла — тогда зеркало
             tmp.write_bytes(_download(IEEE_URL))
-        except OSError as first:
+            _check(tmp)
+        except (OSError, ValueError) as first:
             try:
                 tmp.write_text(from_manuf(_download(MIRROR_URL).decode("utf-8", "replace")), "utf-8")
-            except OSError as second:
+                _check(tmp)
+            except (OSError, ValueError) as second:
                 raise OSError(f"IEEE: {first}; зеркало Wireshark: {second}") from None
     count = len(_LINE.findall(tmp.read_text("utf-8", "replace")))
-    if count < 1000:
-        tmp.unlink(missing_ok=True)
-        raise ValueError(f"файл не похож на базу IEEE OUI (записей: {count})")
     tmp.replace(dest)
     _table.cache_clear()
     return dest, count

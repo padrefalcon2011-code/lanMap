@@ -1115,6 +1115,18 @@ class PortableTest(unittest.TestCase):
         table = dict(oui._LINE.findall(oui.from_manuf(manuf)))
         self.assertEqual(table, {"00005E": "ICANN, IANA Department", "00000C": "Cisco"})
 
+    def test_oui_update_falls_back_when_ieee_sends_a_stub(self):
+        from unittest import mock
+        from lanmap import oui
+        manuf = "".join(f"00:{i // 256:02X}:{i % 256:02X}\tV{i}\tVendor {i} Ltd\n" for i in range(1500))
+        pages = {oui.IEEE_URL: b"<html>Please enable JavaScript</html>", oui.MIRROR_URL: manuf.encode()}
+        with mock.patch.object(oui, "_download", side_effect=pages.__getitem__):
+            path, count = oui.update()
+        self.assertEqual(count, 1500)
+        self.assertEqual(oui.lookup(MAC_B), "Vendor 94 Ltd")  # 00:00:5E → 0x5E = 94
+        path.unlink()
+        oui._table.cache_clear()
+
 
 class FakeRouterModule:
     """Модуль роутера без сети: пароль «right» подходит, остальные нет."""
