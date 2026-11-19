@@ -24,11 +24,110 @@ DEFAULT_PORT = 7480  # вне диапазонов, которые Windows ча�
 MAX_BODY = 64 * 1024
 
 
-class State:
-    """Состояние сервера: токен, замок на запись в data/, ход среза."""
+class Watcher:
+    """«Найти устройство»: фоновый опрос раз в INTERVAL секунд, пока страница спрашивает состояние.
+    Закрыли вкладку — через IDLE_STOP секунд опрос останавливается сам."""
 
-    def __init__(self, token: str):
+    INTERVAL = 2.0
+    IDLE_STOP = 20.0
+
+    def __init__(self, setup=None):
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+        self.last_poll = time.monotonic()
+        self.status, self.error, self.router_note = "starting", None, None
+        self.presence = None
+        self._setup = setup or _live_setup
+        threading.Thread(target=self._run, daemon=True, name="lanmap-watch").start()
+
+    def touch(self) -> None:
+        self.last_poll = time.monotonic()
+
+    @property
+    def alive(self) -> bool:
+        return self.status in ("starting", "running") and not self.stop.is_set()
+
+    def state(self) -> dict:
+        with self.lock:
+            out = {"status": self.status, "error": self.error, "router": self.router_note, "now": time.time(),
+                   "interval": self.INTERVAL}
+            if self.presence:
+                out.update(self.presence.state())
+            return out
+
+    def _run(self) -> None:
+        live = None
+        try:
+            live = self._setup()
+            with self.lock:
+                self.presence, self.router_note, self.status = live["presence"], live.get("router_note"), "running"
+            name_new = live.get("name_new") or (lambda ip, mac: "Новое устройство")
+            cycle = 0
+            while not self.stop.is_set() and time.monotonic() - self.last_poll < self.IDLE_STOP:
+                t0 = time.monotonic()
+                ping = live["sweep"](live["targets"](cycle))
+                clients = None
+                if live.get("router"):
+                    try:
+                        clients = live["router"]()
+                        note = None
+                    except Exception as exc:
+                        note = f"роутер не ответил: {exc}"
+                    with self.lock:
+                        self.router_note = note
+                with self.lock:
+                    self.presence.update(ping, clients, time.time(), name_new)
+                cycle += 1
+                self.stop.wait(max(0.2, self.INTERVAL - (time.monotonic() - t0)))
+        except BaseException as exc:  # показать в интерфейсе, а не уронить поток молча
+            with self.lock:
+                self.error = str(exc) or exc.__class__.__name__
+        finally:
+            with self.lock:
+                self.status = "stopped"
+            if live and live.get("close"):
+                live["close"]()
+
+
+def _live_setup() -> dict:
+    """Настоящий опрос: своя подсеть, устройства последнего среза, роутер — если подключён."""
+    from lanmap import oui, routers
+    from lanmap.collectors import ScanContext, discovery, live
+    net = ops.pick_network()
+    ctx = ScanContext(local_ip=net.local_ip, network=net.network, gateway=net.gateway, if_index=net.if_index,
+                      local_mac=net.mac)
+    try:
+        devices = ops.latest()[1].get("devices", [])
+    except ops.OpError:
+        devices = []
+    poll, note = routers.presence(ctx.gateway) if ctx.gateway else (None, "шлюз не найден")
+    prober = live.Prober(ctx)
+    hosts = [ip for ip in ctx.hosts() if ip != ctx.local_ip]
+    presence = live.Presence(devices, ctx.local_ip,
+                             mac_of=lambda ip: discovery._send_arp((ip, ctx.local_ip)).get("mac"))
+
+    def targets(cycle: int) -> list[str]:
+        # /24 — вся подсеть каждый цикл; большая сеть — знакомые адреса, а вся подсеть раз в 10 циклов
+        if len(hosts) <= 256 or cycle % 10 == 0:
+            return hosts
+        return presence.known_ips()
+
+    def name_new(ip, mac) -> str:
+        vendor = oui.short_vendor(oui.lookup(mac)) if mac else None
+        return f"Новое: {vendor}" if vendor else "Новое устройство"
+
+    return {"presence": presence, "sweep": prober.sweep, "targets": targets, "router": poll,
+            "router_note": None if poll else note, "name_new": name_new, "close": prober.close}
+
+
+class State:
+    """Состояние сервера: токен, замок на запись в data/, ход среза, «Найти устройство»."""
+
+    def __init__(self, token: str, live_setup=None):
         self.token = token
+        self.live_setup = live_setup
+        self.watcher: Watcher | None = None
+        self.watch_lock = threading.Lock()
         self.write_lock = threading.Lock()
         self.scan_lock = threading.Lock()
         self.scan = {"running": False, "stages": [], "error": None, "snapshot": None}
@@ -46,6 +145,26 @@ class State:
             self.scan = {"running": True, "stages": [], "error": None, "snapshot": None, "started": time.time()}
         threading.Thread(target=self._scan, daemon=True, name="lanmap-scan").start()
         return True
+
+    def start_watch(self) -> Watcher:
+        with self.watch_lock:
+            if self.watcher is None or not self.watcher.alive:
+                self.watcher = Watcher(self.live_setup)
+            self.watcher.touch()
+            return self.watcher
+
+    def watch_state(self) -> dict:
+        with self.watch_lock:
+            w = self.watcher
+        if w is None:
+            return {"status": "stopped"}
+        w.touch()
+        return w.state()
+
+    def stop_watch(self) -> None:
+        with self.watch_lock:
+            if self.watcher:
+                self.watcher.stop.set()
 
     def _step(self, text: str) -> None:
         with self.scan_lock:
@@ -160,10 +279,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self._cookie_ok():
                 return self._text(403, "Нет доступа. Открой ссылку, которую напечатал python -m lanmap serve.")
             return self._page()
-        if url.path == "/api/scan":
+        if url.path in ("/api/scan", "/api/watch"):
             if not self._header_ok():
                 return self._json(403, {"error": "нет доступа"})
-            return self._json(200, self.state.scan_status())
+            return self._json(200, self.state.scan_status() if url.path == "/api/scan" else self.state.watch_state())
         self._text(404, "не найдено")
 
     def _page(self) -> None:
@@ -194,6 +313,11 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/scan":
             started = self.state.start_scan()
             return self._json(202 if started else 409, self.state.scan_status())
+        if route == "/api/watch":
+            if body.get("stop"):
+                self.state.stop_watch()
+                return self._json(200, {"status": "stopping"})
+            return self._json(202, self.state.start_watch().state())
         action = {"/api/sign": self._sign, "/api/finding": self._finding, "/api/check": self._check}.get(route)
         if not action:
             return self._json(404, {"error": "не найдено"})
@@ -243,9 +367,9 @@ class Server(ThreadingHTTPServer):
     state: State
 
 
-def make_server(port: int = DEFAULT_PORT, token: str | None = None) -> Server:
-    """Сервер на петлевом адресе. Если порт занят — любой свободный."""
-    state = State(token or secrets.token_urlsafe(24))
+def make_server(port: int = DEFAULT_PORT, token: str | None = None, live_setup=None) -> Server:
+    """Сервер на петлевом адресе. Если порт занят — любой свободный. live_setup — подмена опроса в тестах."""
+    state = State(token or secrets.token_urlsafe(24), live_setup)
     handler = type("LanMapHandler", (Handler,), {"state": state})
     try:
         httpd = Server((LOOPBACK, port), handler)

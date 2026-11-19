@@ -788,6 +788,7 @@ def render(model: dict) -> str:
     <span class="when">{e(started)}</span>
     <span class="spacer"></span>
     <span id="scanst" class="scanst" hidden></span>
+    <button class="iconbtn live-only findbtn" id="find" {tip("Найти устройство: выключи или включи его — увидишь, какое это")}>{icon("search", "s")}<span>Найти устройство</span></button>
     <button class="iconbtn live-only scanbtn" id="scan" {tip("Сделать новый срез сети")}>{icon("refresh", "s")}<span>Срез</span></button>
     <button class="iconbtn tip-l" id="theme" {tip("Светлая / тёмная тема")}>{icon("sun", "s")}{icon("moon", "s")}</button>
   </div>

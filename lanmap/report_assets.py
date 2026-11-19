@@ -358,6 +358,49 @@ main.list .thead{grid-template-columns:auto 1fr auto;grid-template-areas:"icon m
 .toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,20px);background:var(--crit);color:#fff;padding:10px 16px;
  border-radius:12px;opacity:0;pointer-events:none;transition:.2s;z-index:50;max-width:90vw;font-size:14px}
 .toast.on{opacity:1;transform:translate(-50%,0)}
+/* «Найти устройство» */
+.findbtn{border-color:var(--accent);color:var(--accent);font-weight:600}
+.finder{position:fixed;inset:0;z-index:40;background:var(--bg);overflow:auto;padding:16px}
+.finder[hidden]{display:none}
+.finder .fin{max-width:1200px;margin:0 auto}
+.fhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.fhead .spacer{flex:1}
+.fhead h2{display:flex;align-items:center;gap:10px;margin:0;font-size:22px}
+.fhead h2 svg.i{width:28px;height:28px;color:var(--accent)}
+.fpulse{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.fpulse i{width:10px;height:10px;border-radius:50%;background:var(--good);animation:pulse 2s infinite}
+.fpulse.off i{background:var(--faint);animation:none}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(12,163,12,.5)}70%{box-shadow:0 0 0 10px rgba(12,163,12,0)}100%{box-shadow:0 0 0 0 rgba(12,163,12,0)}}
+.fhint{display:flex;align-items:center;gap:12px;margin:14px 0;padding:12px 16px;border-radius:14px;background:var(--accent-soft);
+ font-size:15px;line-height:1.4}
+.fhint svg.i{width:34px;height:34px;color:var(--accent)}
+.fnote{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--warn);margin:-6px 0 10px}
+.fnote[hidden]{display:none}
+.fevents{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;min-height:30px}
+.fev{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:5px 10px;border-radius:999px;background:var(--card);
+ border:1px solid var(--line)}
+.fev time{color:var(--muted);font-variant-numeric:tabular-nums}
+.fev.gone{border-color:var(--crit);color:var(--crit)}.fev.back,.fev.new{border-color:var(--good);color:var(--good)}
+.fev b{color:var(--fg);font-weight:600}
+.fsign{margin-bottom:12px;padding:10px 12px;border:2px solid var(--accent);border-radius:14px;background:var(--card)}
+.fsign[hidden]{display:none}
+.fsign .lv{margin-top:6px}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.ft{display:flex;align-items:center;gap:10px;padding:10px;border-radius:14px;background:var(--card);border:2px solid var(--line);
+ transition:opacity .3s,border-color .3s}
+.ft .ticon{flex:none;width:44px;height:44px}
+.ft .ticon svg.i{width:30px;height:30px}
+.ft .fmain{min-width:0;flex:1}
+.ft .fmain b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25}
+.ft .fips{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted);font-family:ui-monospace,Consolas,monospace}
+.ft .fips span{display:inline-flex;align-items:center;gap:4px}
+.ft .fips i{width:8px;height:8px;border-radius:50%;background:var(--good)}.ft .fips i.off{background:var(--faint)}
+.ft.off{opacity:.45}
+.ft.gone{border-color:var(--crit);opacity:1}.ft.back,.ft.new{border-color:var(--good)}
+.ft .fbadge{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700;padding:3px 8px;border-radius:999px}
+.ft.gone .fbadge{background:var(--crit-soft);color:var(--crit)}
+.ft.back .fbadge,.ft.new .fbadge{background:var(--chip);color:var(--good)}
+.ft .act{flex:none}
+.ft.fixed{opacity:.6}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
 
@@ -493,6 +536,68 @@ if(L){
   else if(scanning&&j.snapshot){try{sessionStorage.removeItem('lanmap.back')}catch(e){}scrollTo(0,0);location.reload();}}
  if(sb)sb.addEventListener('click',async()=>{try{await api('/api/scan',{},sb);}catch(e){}scanning=true;poll();});
  poll();
+
+ // «Найти устройство»: живой список — выключил устройство, и видно, какая плитка погасла
+ const fb=$('#find');let fbox=null,ftimer=null,fdata=null;const RECENT=180;
+ const FKIND={gone:['x','погасло'],back:['check','появилось'],new:['plus','новое']};
+ const fmt=t=>new Date(t*1000).toLocaleTimeString('ru-RU');
+ function tileOf(key){return document.getElementById('d-'+key);}
+ function fTitle(d){const t=tileOf(d.key);const b=t&&t.querySelector('.tmain b');return b?b.textContent:d.title;}
+ function fIcon(d){const t=tileOf(d.key);const i=t&&t.querySelector('.ticon');
+  if(i){const c=i.cloneNode(true);const dot=c.querySelector('.dot');if(dot)dot.remove();return c.outerHTML;}
+  return `<span class="ticon">${ico('question')}</span>`;}
+ function fOpen(){if(!fbox){fbox=document.createElement('div');fbox.className='finder';fbox.id='finder';
+   fbox.innerHTML=`<div class="fin"><div class="fhead"><h2>${ico('search')}Найти устройство</h2>
+    <span class="fpulse off"><i></i><span>запускаю…</span></span><span class="spacer"></span>
+    <button class="iconbtn" data-close title="Закрыть">${ico('x')}</button></div>
+    <div class="fhint">${ico('power')}<span>Выключи устройство или Wi-Fi на телефоне — его плитка <b>погаснет</b> и всплывёт наверх.
+     Включи обратно — <b>загорится</b>. Так видно, какое оно, и его можно сразу подписать.</span></div>
+    <div class="fnote" hidden>${ico('info')}<span></span></div>
+    <div class="fsign" hidden></div><div class="fevents"></div><div class="fgrid"></div></div>`;
+   document.body.appendChild(fbox);$('[data-close]',fbox).addEventListener('click',fClose);
+   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!fbox.hidden&&$('.fsign',fbox).hidden)fClose();});}
+  fbox.hidden=false;document.body.style.overflow='hidden';try{sessionStorage.setItem('lanmap.finder','1')}catch(e){}
+  api('/api/watch',{}).then(()=>fPoll()).catch(()=>{});}
+ function fClose(){fbox.hidden=true;document.body.style.overflow='';clearTimeout(ftimer);
+  try{sessionStorage.removeItem('lanmap.finder')}catch(e){}
+  fetch('/api/watch',{method:'POST',headers:{'Content-Type':'application/json','X-LanMap-Token':L.token},body:'{"stop":true}'});}
+ async function fPoll(){clearTimeout(ftimer);if(!fbox||fbox.hidden)return;
+  try{const r=await fetch('/api/watch',{headers:{'X-LanMap-Token':L.token}});fdata=await r.json();fRender();}
+  catch(e){const p=$('.fpulse',fbox);p.className='fpulse off';$('span',p).textContent='сервер не отвечает';}
+  if(fdata&&fdata.status==='stopped'&&!fdata.error){api('/api/watch',{}).catch(()=>{});}
+  ftimer=setTimeout(fPoll,1000);}
+ function fRender(){const d=fdata,p=$('.fpulse',fbox);
+  const on=d.status==='running';p.className='fpulse'+(on?'':' off');
+  $('span',p).textContent=d.error?('ошибка: '+d.error):on?`опрос каждые ${d.interval} с`:'запускаю…';
+  const note=$('.fnote',fbox);note.hidden=!d.router;if(d.router)$('span',note).textContent=
+   d.router.startsWith('роутер не ответил')?d.router:`Без роутера (${d.router}): спящий телефон может казаться выключенным.`;
+  if(!d.devices)return;
+  const now=d.now,devs=d.devices.map((x,i)=>({...x,i,recent:x.changed_at&&now-x.changed_at<RECENT}));
+  devs.sort((a,b)=>(b.recent?b.changed_at:0)-(a.recent?a.changed_at:0)||(a.fixed-b.fixed)||(b.alive-a.alive)||(a.i-b.i));
+  $('.fevents',fbox).innerHTML=(d.events||[]).slice(0,8).map(e=>{const [i,t]=FKIND[e.kind];
+   return `<span class="fev ${e.kind}">${ico(i)}<time>${fmt(e.t)}</time>${t}: <b>${esc(fTitle(e))}</b></span>`;}).join('')
+   ||`<span class="fev"><time>${fmt(now)}</time>пока без изменений</span>`;
+  $('.fgrid',fbox).innerHTML=devs.map(x=>{const cls=['ft',x.alive?'':'off',x.recent?x.change:'',x.fixed?'fixed':''].join(' ');
+   const ips=Object.entries(x.ips).map(([ip,a])=>`<span><i class="${a?'':'off'}"></i>${esc(ip)}</span>`).join('');
+   const badge=x.recent?`<span class="fbadge">${ico(FKIND[x.change][0])}${FKIND[x.change][1]}</span>`:'';
+   const sign=x.mac&&(x.recent||x.new)?`<button class="act sign" data-fsign="${esc(x.key)}" title="Подписать">${ico('pencil')}</button>`:'';
+   return `<div class="${cls}">${fIcon(x)}<div class="fmain"><b>${esc(fTitle(x))}</b><div class="fips">${ips}</div></div>${badge}${sign}</div>`;}).join('');
+  $$('[data-fsign]',fbox).forEach(b=>b.addEventListener('click',()=>fSign(devs.find(x=>x.key===b.dataset.fsign))));}
+ function fSign(x){const box=$('.fsign',fbox);const t=tileOf(x.key);const pre=t&&t.querySelector('[data-sign]');
+  const d=pre?JSON.parse(pre.dataset.sign):{key:x.key,name:'',place:'',owner:''};
+  box.innerHTML=`<b>${ico('pencil')} ${esc(fTitle(x))}</b><div class="lv signf">
+   <input name="name" maxlength="120" placeholder="название: камера над калиткой" value="${esc(d.name)}">
+   <input name="place" maxlength="120" placeholder="где стоит" value="${esc(d.place)}">
+   <input name="owner" maxlength="120" placeholder="чьё" value="${esc(d.owner)}">
+   <button class="sbtn save">${ico('check')}сохранить</button><button class="sbtn" data-x>${ico('x')}</button></div>`;
+  box.hidden=false;const first=$('input',box);first.focus();first.select();
+  const save=async()=>{const fields={};$$('input',box).forEach(i=>fields[i.name]=i.value.trim());
+   if(!fields.name){toast('Нужно название');first.focus();return;}
+   try{await api('/api/sign',{key:x.key,fields},box);back(null);}catch(e){}};
+  $('.save',box).addEventListener('click',save);$('[data-x]',box).addEventListener('click',()=>{box.hidden=true;});
+  box.onkeydown=e=>{if(e.key==='Enter')save();if(e.key==='Escape'){box.hidden=true;e.stopPropagation();}};}
+ if(fb)fb.addEventListener('click',fOpen);
+ try{if(sessionStorage.getItem('lanmap.finder'))fOpen();}catch(e){}
 
  // вернуть прокрутку и раскрыть то, с чем работали
  let bk=null;try{bk=JSON.parse(sessionStorage.getItem('lanmap.back')||'null');sessionStorage.removeItem('lanmap.back');}catch(e){}

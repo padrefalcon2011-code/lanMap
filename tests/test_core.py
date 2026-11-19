@@ -898,6 +898,111 @@ class ServerTest(unittest.TestCase):
             shutil.rmtree(broken)
 
 
+class PresenceTest(unittest.TestCase):
+    """«Найти устройство»: кто в сети по ping и роутеру, события погасло / появилось / новое."""
+
+    def presence(self):
+        from lanmap.collectors.live import Presence
+        devs = [
+            {"key": MAC_A, "mac": MAC_A, "ips": ["192.0.2.20"], "title": "Телефон"},
+            {"key": MAC_B + "#S1", "mac": MAC_B, "ips": ["192.0.2.10"], "title": "Камера 1", "duplicate_mac": True},
+            {"key": MAC_B + "#S2", "mac": MAC_B, "ips": ["192.0.2.11"], "title": "Камера 2", "duplicate_mac": True},
+            {"key": MAC_C, "mac": MAC_C, "ips": ["192.0.2.1"], "title": "Роутер", "is_gateway": True},
+        ]
+        return Presence(devs, "192.0.2.5", mac_of=lambda ip: "00:00:5E:00:53:99")
+
+    @staticmethod
+    def alive(p, key):
+        return next(d for d in p.state()["devices"] if d["key"] == key)["alive"]
+
+    def test_router_decides_for_silent_phone_ping_for_cameras(self):
+        p = self.presence()
+        ping = {"192.0.2.1": True, "192.0.2.10": True, "192.0.2.11": True, "192.0.2.20": False}
+        router = [{"mac": MAC_A, "ip": "192.0.2.20", "active": True},
+                  {"mac": MAC_B, "ip": "192.0.2.10", "active": True}]
+        self.assertEqual(p.update(ping, router, 1.0), [])  # первый цикл — точка отсчёта, без событий
+        self.assertTrue(self.alive(p, MAC_A))               # на ping молчит, но роутер видит
+        # телефон выключил Wi-Fi: роутер погасил — событие «погасло»
+        router = [dict(router[0], active=False), router[1]]
+        events = p.update(ping, router, 2.0)
+        self.assertEqual([(e["key"], e["kind"]) for e in events], [(MAC_A, "gone")])
+        # камера 2 за мостом выключена: MAC моста у роутера активен, но решает ping (после двух промахов)
+        off = dict(ping, **{"192.0.2.11": False})
+        self.assertEqual(p.update(off, router, 3.0), [])
+        events = p.update(off, router, 4.0)
+        self.assertEqual([(e["key"], e["kind"]) for e in events], [(MAC_B + "#S2", "gone")])
+        self.assertTrue(self.alive(p, MAC_B + "#S1"))
+        events = p.update(ping, router, 5.0)
+        self.assertIn((MAC_B + "#S2", "back"), [(e["key"], e["kind"]) for e in events])
+
+    def test_new_address_and_gateway(self):
+        p = self.presence()
+        ping = {"192.0.2.1": True, "192.0.2.10": True, "192.0.2.11": True}
+        p.update(ping, None, 1.0)
+        events = p.update(dict(ping, **{"192.0.2.30": True}), None, 2.0)
+        self.assertEqual([(e["key"], e["kind"]) for e in events], [("00:00:5E:00:53:99", "new")])
+        # шлюз — не кандидат: его пропажа не попадает в ленту событий
+        down = dict(ping, **{"192.0.2.1": False, "192.0.2.30": True})
+        p.update(down, None, 3.0)
+        self.assertEqual(p.update(down, None, 4.0), [])
+        self.assertFalse(self.alive(p, MAC_C))
+
+    def test_watch_endpoints_and_auto_stop(self):
+        import json
+        import threading
+        import time
+        from lanmap import server
+        from lanmap.collectors.live import Presence
+        sweeps = []
+
+        def setup():
+            pres = Presence([{"key": MAC_A, "mac": MAC_A, "ips": ["192.0.2.20"], "title": "Т"}])
+            return {"presence": pres, "targets": lambda cycle: ["192.0.2.20"],
+                    "sweep": lambda ips: sweeps.append(ips) or {"192.0.2.20": True}}
+
+        old = (server.Watcher.INTERVAL, server.Watcher.IDLE_STOP)
+        server.Watcher.INTERVAL, server.Watcher.IDLE_STOP = 0.05, 0.5
+        httpd = server.make_server(0, token="t", live_setup=setup)
+        httpd.RequestHandlerClass.log_message = lambda *a: None
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            import http.client
+            port = httpd.server_address[1]
+
+            def call(method, body=None, token="t", host=None):
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                hdrs = {"Host": host or f"127.0.0.1:{port}", "X-LanMap-Token": token, "Content-Type": "application/json"}
+                conn.request(method, "/api/watch", body=json.dumps(body) if body is not None else None, headers=hdrs)
+                r = conn.getresponse()
+                raw = r.read()
+                out = r.status, (json.loads(raw) if raw.startswith(b"{") else {})
+                conn.close()
+                return out
+
+            self.assertEqual(call("POST", {}, token="bad")[0], 403)
+            self.assertEqual(call("GET", host="evil.example")[0], 403)
+            self.assertEqual(call("POST", {})[0], 202)
+            for _ in range(50):
+                code, st = call("GET")
+                if st.get("devices") and st["devices"][0]["alive"]:
+                    break
+                time.sleep(0.05)
+            self.assertTrue(st["devices"][0]["alive"])
+            w = httpd.state.watcher
+            for _ in range(60):  # никто не спрашивает — опрос сам останавливается
+                if w.status == "stopped":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(w.status, "stopped")
+            n = len(sweeps)
+            time.sleep(0.2)
+            self.assertEqual(len(sweeps), n)
+        finally:
+            server.Watcher.INTERVAL, server.Watcher.IDLE_STOP = old
+            httpd.shutdown()
+            httpd.server_close()
+
+
 class NoNetworkSpecificsTest(unittest.TestCase):
     def test_no_control_characters(self):
         for path in list(PACKAGE_DIR.rglob("*.py")) + list(PACKAGE_DIR.rglob("*.json")):

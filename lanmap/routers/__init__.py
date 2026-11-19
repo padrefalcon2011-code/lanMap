@@ -46,6 +46,23 @@ def collect(host: str) -> dict:
     return raw
 
 
+def presence(host: str):
+    """Для «Найти устройство»: (функция опроса клиентов роутера, None) или (None, почему нельзя).
+    Модуль может её не поддерживать — тогда работаем на одном ping."""
+    found = detect(host)
+    if not found:
+        return None, "для роутера нет модуля"
+    module = MODULES[found[0]]
+    if not hasattr(module, "presence"):
+        return None, "модуль роутера не умеет живой опрос"
+    if not credentials.load(module.credential_target(host)):
+        return None, "вход в роутер не настроен"
+    try:
+        return module.presence(host), None
+    except Exception as exc:
+        return None, f"роутер: {exc}"
+
+
 def normalize(raw: dict | None) -> dict | None:
     if not raw or not raw.get("kind") or raw.get("skipped") or raw.get("errors", {}).get("login"):
         return None

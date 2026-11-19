@@ -124,6 +124,25 @@ def collect(host: str) -> dict:
     return out
 
 
+def presence(host: str):
+    """Для «Найти устройство»: функция, которая читает только список клиентов (show/ip/hotspot) в общем формате.
+    Вход один раз; повторный — только если роутер забыл сессию."""
+    client = connect(host)
+
+    def poll() -> list[dict]:
+        nonlocal client
+        try:
+            data = client.get(READS["hotspot"])
+        except KeeneticError as exc:
+            if "HTTP 401" not in str(exc):
+                raise
+            client = connect(host)
+            data = client.get(READS["hotspot"])
+        return normalize({"data": {"hotspot": data}})["clients"]
+
+    return poll
+
+
 def _list(value):
     if value is None:
         return []
