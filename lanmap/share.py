@@ -4,12 +4,16 @@
 в них подписи владельца, имена экземпляров mDNS, NetBIOS, DNS, SSID и адреса. Поверх списка —
 `anonymize()` на случай IP или MAC внутри разрешённой строки (баннер, заголовок).
 
+Вывод LanMap пересчитывается без реестра (`identify.resolve(dev, None)`): в заявку идёт догадка
+программы, а не подпись владельца. Значения вывода, в которых сидит имя устройства (правило может
+взять модель из DHCP-имени), выбрасываются: имя идёт только под галочкой.
+
 Имя, которое устройство само сообщает сети (DHCP, mDNS), — самая сильная улика для неопознанных
 и самое личное поле («iPhone-Masha»). Поэтому оно отдельной строкой: человек сам решает галочкой.
 """
 from __future__ import annotations
 
-from lanmap import __version__, oui
+from lanmap import __version__, identify, oui
 from lanmap.anonymize import anonymize
 
 TXT_KEYS = ("md", "model", "ty", "usb_mfg", "usb_mdl", "mfg", "mdl", "manufacturer", "vendor", "product",
@@ -26,16 +30,39 @@ def _v(value) -> str:
     return text if len(text) <= MAX_VALUE else text[:MAX_VALUE - 1] + "…"
 
 
-def summary(dev: dict) -> str:
-    """Что показал LanMap — для поля заявки «Что показал LanMap»."""
-    i = dev.get("identity") or {}
-    return f"{i.get('type_label') or 'Неопознанное устройство'} ({i.get('confidence_label') or 'нет данных'})"
-
-
-def text(dev: dict) -> str:
-    i, f = dev.get("identity") or {}, dev.get("facts") or {}
+def _names(dev: dict) -> set[str]:
+    """Все имена устройства и подписи владельца (в нижнем регистре): им не место в выводе LanMap."""
+    f = dev.get("facts") or {}
     r = dev.get("router") or f.get("router") or {}
-    lines = [f"LanMap {__version__}: {summary(dev)}"]
+    reg = dev.get("registry") or {}
+    found = [r.get("label"), r.get("hostname"), (f.get("netbios") or {}).get("computer"),
+             (f.get("mdns_txt") or {}).get("fn"), *((f.get("upnp") or {}).get("friendlyName") or [])]
+    found += [h.removesuffix(".local") for h in f.get("mdns_hosts", [])]
+    found += list(f.get("mdns_instances", [])) + list(f.get("dns", [])) + list(f.get("router_names", []))
+    found += [v for v in reg.values() if isinstance(v, str)]
+    return {n.strip().lower() for n in found if n and len(n.strip()) >= 3}
+
+
+def verdict(dev: dict) -> dict:
+    """Вывод LanMap без реестра; производитель, модель, прошивка и система — только если в них нет имени устройства."""
+    ident = identify.resolve(dev, None)
+    names = _names(dev)
+    for key in ("vendor", "model", "firmware", "os"):
+        value = str(ident.get(key) or "").lower()
+        if value and any(n in value for n in names):
+            ident[key] = None
+    return ident
+
+
+def summary(ident: dict) -> str:
+    """Что показал LanMap — для поля заявки «Что показал LanMap»."""
+    return f"{ident.get('type_label') or 'Неопознанное устройство'} ({ident.get('confidence_label') or 'нет данных'})"
+
+
+def text(dev: dict, ident: dict | None = None) -> str:
+    i, f = ident or verdict(dev), dev.get("facts") or {}
+    r = dev.get("router") or f.get("router") or {}
+    lines = [f"LanMap {__version__}: {summary(i)}"]
     for key, label in (("vendor", "производитель"), ("model", "модель"), ("firmware", "прошивка"), ("os", "система")):
         if i.get(key):
             lines.append(f"- итог LanMap, {label}: {_v(i[key])}")
@@ -104,4 +131,5 @@ def names_line(dev: dict) -> str:
 
 def payload(dev: dict) -> dict:
     """Данные для кнопки «Помочь опознать» в карточке устройства (атрибут data-share)."""
-    return {"lanmap": summary(dev), "text": text(dev), "names": names_line(dev)}
+    ident = verdict(dev)
+    return {"lanmap": summary(ident), "text": text(dev, ident), "names": names_line(dev)}

@@ -1267,7 +1267,8 @@ class ShareTest(unittest.TestCase):
         d["ips"] = ["192.0.2.77"]
         d["mac"] = d["key"] = "00:00:5E:00:53:7A"
         d["router"] = d["facts"]["router"]
-        d["registry"] = {"name": "registry-secret", "owner": "registry-secret"}
+        d["registry"] = {"name": "registry-secret", "owner": "registry-secret", "type": "tv", "vendor": "registry-secret",
+                         "model": "registry-secret", "confirmed": True}
         d["evidence"] = [{"source": "router", "text": "evidence-secret"}]
         d["identity"] = {"type": "printer", "type_label": "Принтер", "confidence_label": "высокая", "vendor": "TestCorp",
                          "model": "X100", "name": "СекретноеИмя", "rules": ["printer-mdns"],
@@ -1280,11 +1281,27 @@ class ShareTest(unittest.TestCase):
         body = p["text"] + "\n" + p["lanmap"]
         for s in self.SECRETS:
             self.assertNotIn(s.lower(), body.lower(), s)
-        for s in ("Принтер (высокая)", "TestCorp", "X100", "Test Vendor", "80, 554", "_ipp._tcp", "ty=Printer X100",
+        for s in ("LanMap ", "TestCorp", "X100", "Test Vendor", "80, 554", "_ipp._tcp", "ty=Printer X100",
                   "lighttpd", "«Web UI»", "организация TestCorp", "Model=AB123_C45DE67-FG_8M", "Wi-Fi 5 ГГц",
-                  "printer-mdns", "TTL: 64", "Host '<ip>' denied"):
+                  "TTL: 64", "Host '<ip>' denied"):
             self.assertIn(s, body)
         self.assertNotRegex(body, r"[\x00-\x08\x0b-\x1f�]")
+
+    def test_verdict_is_lanmap_own(self):
+        """В заявку идёт догадка программы, не подпись владельца; модель из DHCP-имени — только под галочкой."""
+        from lanmap import share
+        d = device(oui="TP-Link Systems Inc", router={"hostname": "RE450-secret", "link": "wifi"})
+        d["router"] = d["facts"]["router"]
+        d["registry"] = {"type": "tv", "model": "registry-secret", "confirmed": True}
+        ident = identify.resolve(d, None)
+        self.assertEqual(ident["model"], "RE450-secret")  # правило tplink-extender берёт модель из DHCP-имени
+        p = share.payload(d)
+        self.assertNotIn("RE450", p["text"])
+        self.assertNotIn("registry-secret", p["text"])
+        self.assertIn("TP-Link", p["text"])
+        self.assertIn("tplink-extender", p["text"])
+        self.assertNotIn("Телевизор", p["lanmap"])
+        self.assertIn("RE450-secret", p["names"])
 
     def test_names_opt_in(self):
         """Имя, которое устройство сообщает само (DHCP, mDNS), — отдельно, под галочкой; подпись владельца — никогда."""
