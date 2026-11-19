@@ -92,6 +92,18 @@ class Prober:
 
 # --- сведение в состояние устройств ----------------------------------------------------------
 
+def _share(mac: str | None, client: dict | None) -> dict | None:
+    """«Помочь опознать» для устройства, которого нет в срезе: что известно без сканирования —
+    производитель по MAC и сведения роутера. Порты и службы не опрошены, это сказано в тексте."""
+    if not mac:
+        return None
+    from lanmap import oui, share
+    from lanmap.util import is_private_mac
+    private = is_private_mac(mac)
+    facts = {"oui": None if private else oui.lookup(mac), "private_mac": private, "router": client}
+    return share.payload({"key": mac, "facts": facts, "router": client, "live_only": True})
+
+
 class Presence:
     """Кто в сети: из ответов ping и списка клиентов роутера → состояние устройств и события."""
 
@@ -146,9 +158,9 @@ class Presence:
                 if e["key"] == key:
                     e["title"] = title
 
-    def _new_device(self, key: str, ip: str | None, mac: str | None, title: str) -> dict:
+    def _new_device(self, key: str, ip: str | None, mac: str | None, title: str, client: dict | None = None) -> dict:
         dev = {"key": key, "title": title, "mac": mac, "twin": False, "fixed": False, "ips": [ip] if ip else [],
-               "new": True, "alive": None, "change": None, "changed_at": None}
+               "new": True, "alive": None, "change": None, "changed_at": None, "share": _share(mac, client)}
         self.devices[key] = dev
         if ip:
             self.by_ip[ip] = key
@@ -177,7 +189,7 @@ class Presence:
                 key = mac or f"ip:{ip}"
                 if key not in self.devices:
                     title = f"Новое: {c['hostname']}" if c.get("hostname") else name_new(ip, mac)
-                    self._new_device(key, ip, mac, title)
+                    self._new_device(key, ip, mac, title, c)
             if key and ip and active:  # у неактивных клиентов роутер помнит старый адрес — им не верим
                 self._claim(ip, key)
             if ip and not (key and self.devices[key]["twin"]):
@@ -236,5 +248,6 @@ class Presence:
         devs = []
         for d in self.devices.values():
             devs.append({k: d[k] for k in ("key", "title", "mac", "new", "fixed", "alive", "change", "changed_at")}
-                        | {"ips": {ip: self.ip_alive.get(ip) for ip in d["ips"]}})
+                        | {"ips": {ip: self.ip_alive.get(ip) for ip in d["ips"]}}
+                        | ({"share": d["share"]} if d.get("share") else {}))
         return {"devices": devs, "events": list(reversed(self.events)), "cycles": self.cycles}

@@ -933,6 +933,24 @@ class PresenceTest(unittest.TestCase):
     def alive(p, key):
         return next(d for d in p.state()["devices"] if d["key"] == key)["alive"]
 
+    def test_new_device_share(self):
+        """Новое устройство (нет в срезе): «Помочь опознать» из роутера и OUI, без адресов и подписей."""
+        p = self.presence()
+        new_mac = "00:00:5E:00:53:44"
+        router = [{"mac": new_mac, "ip": "192.0.2.44", "active": True, "hostname": "roborock-vacuum-a15",
+                   "label": "Пылесос-Маши", "ssid": "SSID-Секрет", "link": "wifi", "band": "2,4 ГГц"}]
+        p.update({}, router, 1.0)
+        devs = {d["key"]: d for d in p.state()["devices"]}
+        data = devs[new_mac]["share"]
+        self.assertNotIn("share", devs[MAC_A])  # у устройств из среза — данные из плитки отчёта
+        body = data["lanmap"] + data["text"]
+        for s in ("192.0.2.44", "00:00:5E:00:53:44", "Пылесос-Маши", "SSID-Секрет", "roborock"):
+            self.assertNotIn(s, body)
+        self.assertIn("порты и службы ещё не опрошены", body)
+        self.assertIn("Wi-Fi 2,4 ГГц", body)
+        self.assertIn("roborock-vacuum-a15", data["names"])
+        self.assertNotIn("Пылесос", data["names"])
+
     def test_router_decides_for_silent_phone_ping_for_cameras(self):
         p = self.presence()
         ping = {"192.0.2.1": True, "192.0.2.10": True, "192.0.2.11": True, "192.0.2.20": False}

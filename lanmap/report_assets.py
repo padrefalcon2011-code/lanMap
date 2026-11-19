@@ -644,11 +644,12 @@ if(L){
     <span class="fpulse off"><i></i><span>запускаю…</span></span><span class="spacer"></span>
     <button class="iconbtn" data-close title="Закрыть">${ico('x')}</button></div>
     <div class="fhint">${ico('power')}<span>Выключи устройство или Wi-Fi на телефоне — его плитка <b>погаснет</b> и всплывёт наверх.
-     Включи обратно — <b>загорится</b>. Так видно, какое оно, и его можно сразу подписать.</span></div>
+     Включи обратно — <b>загорится</b>. Так видно, какое оно, и его можно сразу подписать или ${ico('question')} помочь опознать.</span></div>
     <div class="fnote" hidden>${ico('info')}<span></span></div>
     <div class="fsign" hidden></div><div class="fevents"></div><div class="fgrid"></div></div>`;
    document.body.appendChild(fbox);$('[data-close]',fbox).addEventListener('click',fClose);
-   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!fbox.hidden&&$('.fsign',fbox).hidden)fClose();});}
+   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!fbox.hidden&&$('.fsign',fbox).hidden
+    &&!document.querySelector('dialog[open]'))fClose();});}
   fbox.hidden=false;document.body.style.overflow='hidden';try{sessionStorage.setItem('lanmap.finder','1')}catch(e){}
   api('/api/watch',{}).then(()=>fPoll()).catch(()=>{});}
  function fClose(){fbox.hidden=true;document.body.style.overflow='';clearTimeout(ftimer);
@@ -674,8 +675,13 @@ if(L){
    const ips=Object.entries(x.ips).map(([ip,a])=>`<span><i class="${a?'':'off'}"></i>${esc(ip)}</span>`).join('');
    const badge=x.recent?`<span class="fbadge">${ico(FKIND[x.change][0])}${FKIND[x.change][1]}</span>`:'';
    const sign=x.mac&&(x.recent||x.new)?`<button class="act sign" data-fsign="${esc(x.key)}" title="Подписать">${ico('pencil')}</button>`:'';
-   return `<div class="${cls}">${fIcon(x)}<div class="fmain"><b>${esc(fTitle(x))}</b><div class="fips">${ips}</div></div>${badge}${sign}</div>`;}).join('');
-  $$('[data-fsign]',fbox).forEach(b=>b.addEventListener('click',()=>fSign(devs.find(x=>x.key===b.dataset.fsign))));}
+   const help=(x.recent||x.new)&&fShare(x)?`<button class="act" data-fshare="${esc(x.key)}" title="Помочь опознать: обезличенный рассказ для заявки на GitHub">${ico('question')}</button>`:'';
+   return `<div class="${cls}">${fIcon(x)}<div class="fmain"><b>${esc(fTitle(x))}</b><div class="fips">${ips}</div></div>${badge}${help}${sign}</div>`;}).join('');
+  $$('[data-fsign]',fbox).forEach(b=>b.addEventListener('click',()=>fSign(devs.find(x=>x.key===b.dataset.fsign))));
+  $$('[data-fshare]',fbox).forEach(b=>b.addEventListener('click',()=>{const x=devs.find(v=>v.key===b.dataset.fshare);
+   shareOpen(fShare(x),fTitle(x));}));}
+ // данные «Помочь опознать»: у устройства из среза — из его плитки, у нового — что собрал сервер (OUI и роутер)
+ function fShare(x){const t=tileOf(x.key);const b=t&&t.querySelector('[data-share]');return b?JSON.parse(b.dataset.share):x.share||null;}
  function fSign(x){const box=$('.fsign',fbox);const t=tileOf(x.key);const pre=t&&t.querySelector('[data-sign]');
   const d=pre?JSON.parse(pre.dataset.sign):{key:x.key,name:'',place:'',owner:''};
   box.innerHTML=`<b>${ico('pencil')} ${esc(fTitle(x))}</b><div class="lv signf">

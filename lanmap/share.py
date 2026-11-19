@@ -132,7 +132,9 @@ def text(dev: dict, ident: dict | None = None) -> str:
         lines.append("- ONVIF: отвечает, но просит пароль")
     if (f.get("smb") or {}).get("dialect"):
         lines.append(f"- SMB: диалект {_v(f['smb']['dialect'])}")
-    if len(lines) == 1:
+    if dev.get("live_only"):
+        lines.append("- замечено живым опросом после среза: порты и службы ещё не опрошены")
+    elif len(lines) == 1:
         lines.append("- улик почти нет: устройство не отвечало на опросы")
     return anonymize("\n".join(lines))
 
