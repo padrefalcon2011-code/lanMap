@@ -4,8 +4,13 @@
 - ICMP-эхо через iphlpapi (IcmpSendEcho): без прав администратора и без сотен процессов ping.exe;
 - список активных клиентов роутера (если модуль роутера подключён) — для телефонов, которые не отвечают на ping.
 
-Правило: если адрес хоть раз ответил на ping за эту сессию — решает ping (он быстрый в обе стороны);
-иначе решает роутер. У MAC-двойников (камеры за мостом) роутер не слушаем: MAC моста активен, пока мост включён.
+Правило:
+- роутер говорит «неактивен» — устройство погасло (телефон выключил Wi-Fi — это видно сразу);
+- роутер говорит «активен», а на ping устройство отвечает стабильно (камера, NAS) — решает ping: выключенная
+  камера гаснет через два промаха, не дожидаясь, пока роутер её забудет;
+- роутер говорит «активен», а на ping устройство отвечает с перерывами (дремлющие часы и телефоны) — решает роутер;
+- роутер про адрес ничего не знает — решает ping.
+У MAC-двойников (камеры за мостом) роутер не слушаем: MAC моста активен, пока мост включён.
 Пропажа по ping засчитывается после двух промахов подряд, чтобы один потерянный пакет не «гасил» устройство.
 """
 from __future__ import annotations
@@ -20,6 +25,8 @@ from lanmap.collectors import ScanContext
 from lanmap.util import norm_mac
 
 MISSES_TO_GONE = 2
+MISSES_ROUTER_SEES = 3  # роутер видит устройство — Wi-Fi в режиме сна пропускает пакеты, ждём дольше
+STEADY_CYCLES = 30  # столько ответов подряд (~минута) — и «дремлющий» снова судится по ping (камеру включили обратно)
 MAX_EVENTS = 60
 
 
@@ -74,9 +81,10 @@ class Prober:
         self.echo = echo
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lanmap-icmp")
 
-    def sweep(self, ips: list[str]) -> dict[str, bool]:
+    def sweep(self, ips: list[str], patient: set[str] = frozenset()) -> dict[str, bool]:
+        """patient — знакомые адреса: им даём секунду (Wi-Fi в режиме сна отвечает не сразу), пустым — 0,4 с."""
         ips = [ip for ip in ips if self.ctx.in_scope(ip) and ip != self.ctx.local_ip]
-        return dict(zip(ips, self.pool.map(self.echo, ips)))
+        return dict(zip(ips, self.pool.map(lambda ip: self.echo(ip, 1000 if ip in patient else 400), ips)))
 
     def close(self) -> None:
         self.pool.shutdown(wait=False, cancel_futures=True)
@@ -107,13 +115,36 @@ class Presence:
         self.local_ip = local_ip
         self.mac_of = mac_of                # MAC нового адреса (ARP), спрашивается один раз
         self.answered: set[str] = set()     # адреса, хоть раз ответившие на ping за сессию
+        self.dozing: set[str] = set()       # роутер видит, а ping через раз — ping им не судья
         self.misses: dict[str, int] = {}
+        self.streak: dict[str, int] = {}
         self.ip_alive: dict[str, bool] = {}
         self.events: list[dict] = []
         self.cycles = 0
 
     def known_ips(self) -> list[str]:
         return list(self.by_ip)
+
+    def _claim(self, ip: str, key: str) -> None:
+        """Адрес сейчас у этого устройства (так говорит роутер): у других устройств с другим MAC его снимаем —
+        иначе старый адрес из среза зажигал бы чужую плитку."""
+        dev = self.devices[key]
+        for other in self.devices.values():
+            if (other is not dev and ip in other["ips"] and not other["twin"]
+                    and not (other["mac"] and other["mac"] == dev["mac"])):
+                other["ips"].remove(ip)
+        if ip not in dev["ips"]:
+            dev["ips"].append(ip)
+        if self.devices.get(self.by_ip.get(ip), {}).get("mac") != dev["mac"] or ip not in self.by_ip:
+            self.by_ip[ip] = key
+
+    def rename(self, key: str, title: str) -> None:
+        """Устройство подписали — новое имя сразу в живом списке и в ленте."""
+        if key in self.devices and title:
+            self.devices[key]["title"] = title
+            for e in self.events:
+                if e["key"] == key:
+                    e["title"] = title
 
     def _new_device(self, key: str, ip: str | None, mac: str | None, title: str) -> dict:
         dev = {"key": key, "title": title, "mac": mac, "twin": False, "fixed": False, "ips": [ip] if ip else [],
@@ -135,22 +166,22 @@ class Presence:
         for c in clients or []:
             mac = norm_mac(c.get("mac"))
             ip = c.get("ip")
+            active = bool(c.get("active"))
             key = self.by_mac.get(mac) if mac else None
-            if key is None and c.get("active") and (mac or ip):
-                if ip and ip in self.by_ip:
-                    key = self.by_ip[ip]
-                else:
-                    key = mac or f"ip:{ip}"
-                    if key not in self.devices:
-                        title = f"Новое: {c['hostname']}" if c.get("hostname") else name_new(ip, mac)
-                        self._new_device(key, ip, mac, title)
-            if key and ip:
-                dev = self.devices[key]
-                if ip not in dev["ips"]:
-                    dev["ips"].append(ip)
-                self.by_ip.setdefault(ip, key)
+            if key is None and ip in self.by_ip:
+                # MAC-двойники (за мостом) и устройства без MAC — по адресу; чужой MAC на адресе — другое устройство
+                owner = self.devices[self.by_ip[ip]]
+                if not mac or owner["mac"] in (None, mac):
+                    key = owner["key"]
+            if key is None and active and (mac or ip):
+                key = mac or f"ip:{ip}"
+                if key not in self.devices:
+                    title = f"Новое: {c['hostname']}" if c.get("hostname") else name_new(ip, mac)
+                    self._new_device(key, ip, mac, title)
+            if key and ip and active:  # у неактивных клиентов роутер помнит старый адрес — им не верим
+                self._claim(ip, key)
             if ip and not (key and self.devices[key]["twin"]):
-                router_ip[ip] = router_ip.get(ip, False) or bool(c.get("active"))
+                router_ip[ip] = router_ip.get(ip, False) or active
         # ping: новые адреса, которых нет ни в срезе, ни у роутера
         for ip, ok in ping.items():
             if ok and ip not in self.by_ip and ip != self.local_ip:
@@ -163,18 +194,27 @@ class Presence:
                     self._new_device(mac or f"ip:{ip}", ip, mac, name_new(ip, mac))
         # итог по адресам
         for ip, ok in ping.items():
+            seen = router_ip.get(ip)
             if ok:
+                if seen and self.misses.get(ip, 0) >= MISSES_TO_GONE:
+                    self.dozing.add(ip)  # «пропадал» по ping, а роутер всё это время видел — дремлет
                 self.answered.add(ip)
                 self.misses[ip] = 0
+                self.streak[ip] = self.streak.get(ip, 0) + 1
+                if self.streak[ip] >= STEADY_CYCLES:
+                    self.dozing.discard(ip)
             else:
+                self.streak[ip] = 0
+                if seen and ip not in self.answered:
+                    self.dozing.add(ip)  # роутер видит, а на ping молчит с самого начала
                 self.misses[ip] = self.misses.get(ip, 0) + 1
         for ip in set(self.by_ip) | set(ping):
-            if ip in self.answered:
-                alive = self.misses.get(ip, 0) < MISSES_TO_GONE
-            elif ip in router_ip:
-                alive = router_ip[ip]
+            need = MISSES_ROUTER_SEES if router_ip.get(ip) else MISSES_TO_GONE
+            pinged = self.misses.get(ip, 0) < need if ip in self.answered else bool(ping.get(ip))
+            if ip in router_ip:
+                alive = router_ip[ip] and (pinged or ip in self.dozing or ip not in self.answered)
             else:
-                alive = bool(ping.get(ip))
+                alive = pinged
             self.ip_alive[ip] = alive
         if self.local_ip:
             self.ip_alive[self.local_ip] = True

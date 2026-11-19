@@ -947,6 +947,68 @@ class PresenceTest(unittest.TestCase):
         self.assertEqual(p.update(down, None, 4.0), [])
         self.assertFalse(self.alive(p, MAC_C))
 
+    def test_stale_router_address_does_not_light_other_tile(self):
+        """Роутер помнит старый адрес выключенного устройства; этот адрес теперь у другого — плитки не путаются."""
+        p = self.presence()
+        router = [{"mac": MAC_A, "ip": "192.0.2.20", "active": False},              # телефон выключен, адрес старый
+                  {"mac": "00:00:5E:00:53:77", "ip": "192.0.2.20", "active": True}]  # адрес теперь у другого
+        ping = {"192.0.2.1": True, "192.0.2.10": True, "192.0.2.11": True, "192.0.2.20": True}
+        p.update(ping, router, 1.0)
+        self.assertFalse(self.alive(p, MAC_A))
+        self.assertTrue(self.alive(p, "00:00:5E:00:53:77"))
+        p.rename("00:00:5E:00:53:77", "Часы")
+        self.assertEqual(next(d for d in p.state()["devices"] if d["key"] == "00:00:5E:00:53:77")["title"], "Часы")
+
+    def test_dozing_watch_does_not_flap_but_steady_camera_goes_dark(self):
+        from lanmap.collectors.live import Presence
+        watch, cam = "00:00:5E:00:53:21", "00:00:5E:00:53:22"
+        p = Presence([{"key": cam, "mac": cam, "ips": ["192.0.2.22"], "title": "Камера"}])
+        router = [{"mac": watch, "ip": "192.0.2.21", "active": True}, {"mac": cam, "ip": "192.0.2.22", "active": True}]
+        events = []
+        # часы: роутер видит всё время, ping через раз; камера отвечает стабильно
+        for i, w in enumerate([False, False, True, False, False, False, True, True, False, False]):
+            events += p.update({"192.0.2.21": w, "192.0.2.22": True}, router, float(i))
+        self.assertEqual(events, [])
+        self.assertTrue(self.alive(p, watch))
+        # камеру выключили, роутер ещё считает её активной — гаснет по ping после трёх промахов
+        off = {"192.0.2.21": False, "192.0.2.22": False}
+        events = p.update(off, router, 20.0) + p.update(off, router, 21.0)
+        self.assertEqual(events, [])
+        events = p.update(off, router, 22.0)
+        self.assertEqual([(e["key"], e["kind"]) for e in events], [(cam, "gone")])
+
+    def test_router_hiccup_keeps_last_clients(self):
+        """Один сбой роутера не «гасит» телефоны, которые решает роутер."""
+        import time
+        from lanmap import server
+        from lanmap.collectors.live import Presence
+        calls = []
+        pres = Presence([{"key": MAC_A, "mac": MAC_A, "ips": ["192.0.2.20"], "title": "Т"}])
+
+        def router():
+            calls.append(1)
+            if len(calls) % 2 == 0:
+                raise OSError("timeout")
+            return [{"mac": MAC_A, "ip": "192.0.2.20", "active": True}]
+
+        def setup():
+            return {"presence": pres, "targets": lambda c: ["192.0.2.20"], "sweep": lambda ips: {"192.0.2.20": False},
+                    "router": router}
+
+        old = (server.Watcher.INTERVAL, server.Watcher.IDLE_STOP)
+        server.Watcher.INTERVAL, server.Watcher.IDLE_STOP = 0.02, 1.0  # цикл не короче 0,2 с
+        try:
+            w = server.Watcher(setup)
+            for _ in range(60):
+                if w.status == "stopped":
+                    break
+                time.sleep(0.05)
+        finally:
+            server.Watcher.INTERVAL, server.Watcher.IDLE_STOP = old
+        self.assertGreater(len(calls), 3)
+        self.assertEqual(pres.events, [])
+        self.assertTrue(self.alive(pres, MAC_A))
+
     def test_watch_endpoints_and_auto_stop(self):
         import json
         import threading

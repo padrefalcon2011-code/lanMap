@@ -62,16 +62,15 @@ class Watcher:
             with self.lock:
                 self.presence, self.router_note, self.status = live["presence"], live.get("router_note"), "running"
             name_new = live.get("name_new") or (lambda ip, mac: "Новое устройство")
-            cycle = 0
+            cycle, clients = 0, None
             while not self.stop.is_set() and time.monotonic() - self.last_poll < self.IDLE_STOP:
                 t0 = time.monotonic()
                 ping = live["sweep"](live["targets"](cycle))
-                clients = None
                 if live.get("router"):
                     try:
                         clients = live["router"]()
                         note = None
-                    except Exception as exc:
+                    except Exception as exc:  # один сбой роутера не должен «гасить» все телефоны: берём прошлый список
                         note = f"роутер не ответил: {exc}"
                     with self.lock:
                         self.router_note = note
@@ -116,7 +115,7 @@ def _live_setup() -> dict:
         vendor = oui.short_vendor(oui.lookup(mac)) if mac else None
         return f"Новое: {vendor}" if vendor else "Новое устройство"
 
-    return {"presence": presence, "sweep": prober.sweep, "targets": targets, "router": poll,
+    return {"presence": presence, "sweep": lambda ips: prober.sweep(ips, set(presence.by_ip)), "targets": targets, "router": poll,
             "router_note": None if poll else note, "name_new": name_new, "close": prober.close}
 
 
@@ -348,6 +347,10 @@ class Handler(BaseHTTPRequestHandler):
             raise ops.OpError("Нет полей для подписи")
         clean = {k: self._str(fields, k) if fields[k] != "" else "" for k in fields}
         key, entry = ops.sign(self._str(body, "key"), clean)
+        w = self.state.watcher
+        if w and w.presence:
+            with w.lock:
+                w.presence.rename(key, entry.get("name"))
         return {"key": key, "name": entry.get("name")}
 
     def _finding(self, body: dict) -> dict:
