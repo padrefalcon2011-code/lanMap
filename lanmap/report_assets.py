@@ -391,7 +391,7 @@ a.sbtn{text-decoration:none}
 .first{max-width:680px;margin:6vh auto;padding:0 16px}.first h1{display:flex;align-items:center;gap:10px;font-size:22px}
 .first .go{margin:4px 16px 0}.first .sbtn.save{font-size:15px;padding:10px 18px}
 /* «Найти устройство» */
-.findbtn{border-color:var(--accent);color:var(--accent);font-weight:600}
+.findbtn,.askbtn{border-color:var(--accent);color:var(--accent);font-weight:600}
 .quitbtn:hover{border-color:var(--crit);color:var(--crit)}
 .bye{position:fixed;inset:0;z-index:60;background:var(--bg);display:grid;place-items:center;text-align:center;padding:16px}
 .bye svg.i{width:64px;height:64px;color:var(--muted)}
@@ -534,6 +534,29 @@ function shareOpen(d,title){
  shdlg.showModal();}
 $$('[data-share]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const t=b.closest('.tile');
  const n=t&&$('.tmain b',t);shareOpen(JSON.parse(b.dataset.share),n?n.textContent:'');}));
+
+// «Спросить ИИ»: обезличенный текст всего отчёта (lanmap/askai.py), только копирование — никуда не отправляется
+const askBtn=$('#askai');
+if(askBtn)askBtn.addEventListener('click',()=>{
+ const sico=n=>`<svg class="i s" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+ if(!shdlg){shdlg=document.createElement('dialog');shdlg.className='setupdlg';document.body.appendChild(shdlg);
+  shdlg.addEventListener('click',e=>{if(e.target===shdlg)shdlg.close();});}
+ shdlg.innerHTML=`<div class="dh"><h2>${sico('bot')}Спросить ИИ</h2><button class="iconbtn" data-close title="Закрыть">${sico('x')}</button></div>
+ <div class="setup"><section class="sx">
+  <p><b>Скопируй текст и вставь в чат с ИИ</b> — ChatGPT, Claude, GigaChat, Алиса. Он объяснит, что из находок
+   опасно на самом деле, что чинить первым и как — по шагам для твоих моделей.</p>
+  <p>Адреса, MAC, имена и подписи заменены метками У1, У2… — ИИ видит устройства и связи между ними, но не твою сеть.
+   Это список слабых мест сети: для чата с ИИ годится, а на открытый форум — лучше после исправления.</p>
+  <textarea data-text></textarea>
+  <div class="lv"><button class="sbtn save" data-shcopy>${sico('copy')}<span>Копировать</span></button>
+   <span class="muted" data-size></span></div></section></div>`;
+ const ta=$('[data-text]',shdlg);ta.value=JSON.parse(askBtn.dataset.askai).text;
+ $('[data-size]',shdlg).textContent=`${ta.value.split('\n').length} строк`;
+ $('[data-close]',shdlg).addEventListener('click',()=>shdlg.close());
+ $('[data-shcopy]',shdlg).addEventListener('click',async ev=>{const l=$('span',ev.currentTarget);
+  try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}
+  l.textContent='✓ скопировано — вставь в чат';setTimeout(()=>l.textContent='Копировать',2500);});
+ shdlg.showModal();});
 
 // всплывающие заметки: закрывать по клику мимо
 document.addEventListener('click',e=>{$$('details.pill[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});

@@ -23,15 +23,30 @@ ONVIF_KEYS = ("Manufacturer", "Model", "FirmwareVersion")
 MAX_VALUE = 160
 
 
-def _v(value) -> str:
-    """Одно значение: только печатные символы, без лишних пробелов, не длиннее MAX_VALUE."""
+def clean_value(value, limit: int = MAX_VALUE) -> str:
+    """Одно значение: только печатные символы, без лишних пробелов, не длиннее limit."""
     text = "".join(ch for ch in str(value) if ch.isprintable() and ch != "�")
     text = " ".join(text.split())
-    return text if len(text) <= MAX_VALUE else text[:MAX_VALUE - 1] + "…"
+    return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def _names(dev: dict) -> set[str]:
-    """Все имена устройства и подписи владельца (в нижнем регистре): им не место в выводе LanMap."""
+_v = clean_value
+
+
+def _self_described(f: dict) -> list[str]:
+    """Как устройство называет себя по стандарту (UPnP, ONVIF, mDNS TXT): модель и производитель, не имя."""
+    u, o, t = f.get("upnp") or {}, f.get("onvif") or {}, f.get("mdns_txt") or {}
+    texts = [v for k in ("manufacturer", "modelName", "modelNumber") for v in u.get(k) or []]
+    texts += [o.get("Manufacturer"), o.get("Model"), f.get("oui")] + [t.get(k) for k in TXT_KEYS]
+    return [str(x).lower() for x in texts if x]
+
+
+def personal_names(dev: dict) -> set[str]:
+    """Имена устройства и подписи владельца (в нижнем регистре): им не место в выводе LanMap.
+
+    Имя, которое целиком входит в самоописание устройства (принтер объявляет в mDNS «EPSON L566 Series»,
+    владелец подписал его «EPSON»), — это модель, а не личное имя: такие не считаются.
+    """
     f = dev.get("facts") or {}
     r = dev.get("router") or f.get("router") or {}
     reg = dev.get("registry") or {}
@@ -39,14 +54,16 @@ def _names(dev: dict) -> set[str]:
              (f.get("mdns_txt") or {}).get("fn"), *((f.get("upnp") or {}).get("friendlyName") or [])]
     found += [h.removesuffix(".local") for h in f.get("mdns_hosts", [])]
     found += list(f.get("mdns_instances", [])) + list(f.get("dns", [])) + list(f.get("router_names", []))
-    found += [v for v in reg.values() if isinstance(v, str)]
-    return {n.strip().lower() for n in found if n and len(n.strip()) >= 3}
+    found += [reg.get(k) for k in ("name", "place", "owner", "purpose")]  # тип, модель и т. п. — не имена
+    names = {n.strip().lower() for n in found if isinstance(n, str) and len(n.strip()) >= 3}
+    described = _self_described(f)
+    return {n for n in names if not any(n in d for d in described)}
 
 
 def verdict(dev: dict) -> dict:
     """Вывод LanMap без реестра; производитель, модель, прошивка и система — только если в них нет имени устройства."""
     ident = identify.resolve(dev, None)
-    names = _names(dev)
+    names = personal_names(dev)
     for key in ("vendor", "model", "firmware", "os"):
         value = str(ident.get(key) or "").lower()
         if value and any(n in value for n in names):

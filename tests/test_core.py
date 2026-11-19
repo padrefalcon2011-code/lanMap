@@ -1333,6 +1333,88 @@ class ShareTest(unittest.TestCase):
             self.assertNotIn(s.lower(), (data["lanmap"] + data["text"]).lower(), s)
 
 
+class AskAiTest(unittest.TestCase):
+    """«Спросить ИИ»: весь отчёт без адресов, имён и подписей, но со связями между устройствами."""
+
+    SECRETS = ("192.0.2.1", "192.0.2.20", "192.0.2.21", "198.51.100.30", "203.0.113.5", "00:00:5E:00:53:01",
+               "00:00:5E:00:53:20", "00:00:5E:00:53:21", "00-00-5E-00-53-99", "Камера-у-Маши", "dhcp-secret",
+               "SSID-Секрет", "Сегмент-Секрет", "pc-secret", "registry-secret", "reason-secret", "note-secret",
+               "static-desc-secret", "alias-secret", "netbios-secret", "fn-secret", "SN-SECRET")
+
+    def mk(self, key, ip, dev_type, label, ports=(), gateway=False, facts=None, router=None):
+        d = mdev(key, [ip], ports=ports)
+        d["services"] = [{"port": p, "name": "Telnet" if p == 23 else None} for p in ports]
+        d["facts"].update({"ports": list(ports), "mdns_services": [], "mdns_txt": {}, "http": [], "tls": [],
+                           "rtsp": [], "ssdp_server": [], "wsd_types": [], "oui": None, "private_mac": False},
+                          **(facts or {}))
+        d["router"] = d["facts"]["router"] = {"label": label, "hostname": "dhcp-secret", "ssid": "SSID-Секрет",
+                                              "segment": "Сегмент-Секрет", "link": "wifi", "band": "2,4 ГГц",
+                                              "mac": key, "ip": ip, **(router or {})}
+        d["identity"] = {"type": dev_type, "type_label": identify.TYPES[dev_type], "vendor": "TestCorp",
+                         "model": "Z9", "firmware": "1.2", "name": label, "confidence": 4, "chosen": {},
+                         "group": identify.GROUPS[dev_type]}
+        d.update(is_gateway=gateway, is_local=False, duplicate_mac=False, title=label, subtitle=label,
+                 registry={"name": "registry-secret", "owner": "registry-secret", "confirmed": True}, evidence=[])
+        return d
+
+    def model(self):
+        from lanmap import checklist, security
+        gw = self.mk("00:00:5E:00:53:01", "192.0.2.1", "router", "Роутер-registry-secret", ports=[80], gateway=True)
+        cam = self.mk("00:00:5E:00:53:20", "192.0.2.20", "camera", "Камера-у-Маши", ports=[23, 80],
+                      facts={"netbios": {"computer": "netbios-secret"}, "mdns_txt": {"fn": "fn-secret"},
+                             "onvif": {"SerialNumber": "SN-SECRET"}})
+        pc = self.mk("00:00:5E:00:53:21", "192.0.2.21", "computer", "pc-secret")
+        m = model([gw, cam, pc], router={"kind": "keenetic", "model": "Test", "firmware": "5.0", "clients": [],
+                                         "reservations": [], "forwards": [
+            {"kind": "static", "protocol": "tcp", "port": 8080, "to_ip": "192.0.2.20", "to_port": 80,
+             "description": "static-desc-secret"},
+            {"kind": "upnp", "protocol": "tcp", "port": 5000, "to_ip": "192.0.2.21", "to_port": 5000,
+             "description": "dhcp-secret 192.0.2.21"},
+            {"kind": "upnp", "protocol": "udp", "port": 9, "to_ip": "198.51.100.30", "to_port": 9}]})
+        m["meta"].update(hostname="pc-secret", ports_tested=100,
+                         interface={"prefix": 24, "local_ip": "192.0.2.21", "mac": "00-00-5E-00-53-99",
+                                    "alias": "alias-secret", "description": "alias-secret", "gateway": "192.0.2.1"})
+        m["igd"] = {"external_scope": "public", "gateways": [{"ip": "192.0.2.1", "external_ip": "203.0.113.5"}]}
+        snap = Path(tempfile.mkdtemp(dir=TMP.name))
+        m["security"] = security.evaluate(m, snap, {23, 80}, {})
+        for f in m["security"]["findings"]:
+            f["reason"] = "reason-secret"
+        m["checklist"] = checklist.evaluate(m, {"E6": {"status": "done", "note": "note-secret"}})
+        return m
+
+    def test_no_secrets_and_links_kept(self):
+        from lanmap import askai
+        text = askai.text(self.model())
+        for s in self.SECRETS:
+            self.assertNotIn(s.lower(), text.lower(), s)
+        self.assertIsNone(re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text))
+        self.assertIsNone(re.search(r"\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}\b", text))
+        self.assertIn("- У1 — Роутер", text)                      # шлюз первым
+        self.assertIn("→ У2:80", text)                              # проброс на камеру…
+        self.assertIn("У2 (Камера TestCorp Z9): порт 23", text)      # …и находка на ней же — та же метка
+        self.assertIn("→ У3:5000, описание «<имя> У3»", text)       # имя и адрес в описании UPnP заменены
+        self.assertIn("→ неизвестный адрес:9", text)
+        self.assertIn("сеть A", text)
+        self.assertIn("Помоги мне разобраться", text.split("##")[0])  # вступление — просьба к ИИ
+        self.assertIn("пробросы видны из интернета", text)
+        self.assertIn("Порядок в сети", text)
+
+    def test_minimal_model(self):
+        from lanmap import askai
+        text = askai.text(model([]))
+        self.assertIn("Устройства в сети: 0", text)
+        self.assertIn("проверки безопасности в срезе нет", text)
+
+    def test_button_in_report(self):
+        from lanmap.report import render
+        m = self.model()
+        for d in m["devices"]:
+            d["actions"] = []
+            d["identity"].update(conflicts=[], notes=[], rules=[], os=None)
+        page = render(m)
+        self.assertIn('id="askai" data-askai="', page)
+
+
 class NoNetworkSpecificsTest(unittest.TestCase):
     def test_no_control_characters(self):
         for path in list(PACKAGE_DIR.rglob("*.py")) + list(PACKAGE_DIR.rglob("*.json")):

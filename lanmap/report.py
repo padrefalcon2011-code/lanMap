@@ -11,6 +11,7 @@ import ipaddress
 import json
 from collections import Counter
 
+from lanmap import askai as askai_mod
 from lanmap import forwards as fw_mod
 from lanmap import security as sec_mod
 from lanmap import share as share_mod
@@ -797,6 +798,7 @@ def render(model: dict) -> str:
     <span id="scanst" class="scanst" hidden></span>
     <button class="iconbtn live-only findbtn" id="find" {tip("Найти устройство: выключи или включи его — увидишь, какое это")}>{icon("search", "s")}<span>Найти устройство</span></button>
     <button class="iconbtn live-only scanbtn" id="scan" {tip("Сделать новый срез сети")}>{icon("refresh", "s")}<span>Срез</span></button>
+    <button class="iconbtn askbtn tip-l" id="askai" data-askai="{live({"text": askai_mod.text(model)})}" {tip("Обезличенный отчёт для чата с ИИ")}>{icon("bot", "s")}<span>Спросить ИИ</span></button>
     <button class="iconbtn live-only tip-l" id="setup" {tip("Настройка: база производителей, вход в роутер, паспорт роутера")}>{icon("gear", "s")}</button>
     <button class="iconbtn tip-l" id="theme" {tip("Светлая / тёмная тема")}>{icon("sun", "s")}{icon("moon", "s")}</button>
     <button class="iconbtn live-only quitbtn tip-l" id="quit" {tip("Выключить LanMap и закрыть вкладку")}>{icon("power", "s")}</button>
