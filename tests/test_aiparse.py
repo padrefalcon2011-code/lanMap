@@ -163,6 +163,20 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(ops.ai_apply(MAC, answer(), to_registry=False)["rule"], done["rule"])
         self.assertEqual(len(read_json(os.path.join(self.tmp.name, "fingerprints", "ai.json"))["rules"]), 1)
 
+    def test_review_shows_replaced_signature(self):
+        self.cam["registry"] = {"vendor": "Старое", "model": "XM530", "confirmed": True}
+        r = ops.ai_check(MAC, answer())
+        self.assertEqual(r["replaces"], {"vendor": ["Старое", "Xiongmai"]})  # одинаковая модель — не замена
+        self.assertTrue(r["can_sign"])
+
+    def test_no_mac_rule_only(self):
+        self.other["mac"] = None
+        self.other["key"] = "ip:192.0.2.40"
+        self.assertFalse(ops.ai_check("ip:192.0.2.40", answer())["can_sign"])
+        done = ops.ai_apply("ip:192.0.2.40", answer())
+        self.assertIsNone(done["registry"])
+        self.assertTrue(done["rule"])
+
     def test_apply_nothing(self):
         with self.assertRaises(ops.OpError):
             ops.ai_apply(MAC, answer(rule=None), to_registry=False)

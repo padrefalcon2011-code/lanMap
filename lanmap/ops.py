@@ -429,7 +429,7 @@ def ai_apply(target: str, answer: str, to_registry: bool = True, save_rule: bool
     out = ai_check(target, answer)
     dev = device(target)
     done: dict = {"key": dev["key"], "registry": None, "rule": None}
-    if to_registry:
+    if to_registry and out["can_sign"]:
         fields = aiparse.registry_fields(out)
         if fields:
             done["registry"] = sign(dev["key"], fields)[1]

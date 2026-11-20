@@ -275,9 +275,14 @@ def _matches(rule: dict, dev: dict) -> bool:
 
 def review(answer: dict, dev: dict, devices: list[dict]) -> dict:
     """Что показать владельцу до подтверждения. Правило, не подходящее к этому устройству, не годится."""
+    reg = dev.get("registry") or {}
     out = dict(answer, type_label=identify.TYPES.get(answer["type"] or "", ""),
                confidence_label=identify.LEVEL_NAMES[identify.LEVELS[answer["confidence"]]],
-               rule_error=None, rule_others=[])
+               rule_error=None, rule_others=[],
+               # подписать можно только устройство с MAC; что из подписи владельца ответ заменит — видно до «Принять»
+               can_sign=bool(dev.get("mac")),
+               replaces={k: [reg[k], answer[k]] for k in THEN_FIELDS
+                         if reg.get(k) and answer.get(k) and reg[k] != answer[k]})
     rule = answer.get("rule")
     if rule:
         try:

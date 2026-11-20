@@ -583,11 +583,13 @@ function aiOpen(b){
      :j.rule_error?`<p class="err">Правило не годится: ${sesc(j.rule_error)}</p>`:'';
     res.innerHTML=`<p><b>${sesc(j.type_label||'тип не назван')}</b>${what?' · '+sesc(what):''} · уверенность ИИ: ${sesc(j.confidence_label)}</p>
      <p>${sesc(j.explanation)}</p>${j.checks.length?'<p><b>Что ещё проверить:</b></p><ul>'+j.checks.map(c=>`<li>${sesc(c)}</li>`).join('')+'</ul>':''}${rule}
-     <label class="shname"><input type="checkbox" data-reg checked> Записать тип и модель в реестр — как подпись владельца</label>
+     ${j.can_sign?`<label class="shname"><input type="checkbox" data-reg checked> Записать тип и модель в реестр — как подпись владельца</label>
+      ${Object.entries(j.replaces).map(([k,[was,now]])=>`<p class="err">${sesc({type:'тип',vendor:'производитель',model:'модель'}[k])} в реестре сейчас «${sesc(was)}» — станет «${sesc(now)}»</p>`).join('')}`
+      :'<p class="muted">MAC неизвестен — в реестр не записать, только правило.</p>'}
      ${j.rule?'<label class="shname"><input type="checkbox" data-rule checked> Сохранить правило — дальше LanMap узнает такие устройства сам</label>':''}
      <div class="lv"><button class="sbtn save" data-apply>${sico('check')}<span>Принять</span></button></div>`;
     $('[data-apply]',res).addEventListener('click',async ev=>{const btn=ev.currentTarget;btn.classList.add('busy');
-     try{await post('/api/ai/apply',{key,answer:ans.value,registry:$('[data-reg]',res).checked,rule:!!($('[data-rule]',res)||{}).checked});
+     try{await post('/api/ai/apply',{key,answer:ans.value,registry:!!($('[data-reg]',res)||{}).checked,rule:!!($('[data-rule]',res)||{}).checked});
       try{sessionStorage.setItem('lanmap.back',JSON.stringify({y:scrollY,id:b.dataset.id}))}catch(e){}location.reload();}
      catch(e){btn.classList.remove('busy');res.insertAdjacentHTML('beforeend',`<p class="err">${sesc(e.message)}</p>`);}});}
    catch(e){res.innerHTML=`<p class="err">${sesc(e.message)}</p>`;}
