@@ -65,7 +65,7 @@ class _Dev:
             "ports": set(), "mdns_services": set(), "mdns_txt": {}, "mdns_hosts": set(), "mdns_instances": set(),
             "upnp": {}, "onvif": {}, "http": [], "tls": [], "ssh": [], "rtsp": [], "banners": [],
             "ssdp_server": set(), "ssdp_st": set(), "wsd_types": set(), "netbios": None, "dns": set(),
-            "router_names": set(), "smb": None, "ttl": None, "alive": False, "arp": False, "duplicate_mac": False,
+            "router_names": set(), "smb": None, "smb1": None, "ttl": None, "alive": False, "arp": False, "duplicate_mac": False,
             "router": None, "router_only": False,
         }
         self.evidence: list[dict] = []
@@ -330,6 +330,10 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
             dev.facts["smb"] = s
             dev.add("smb", f"SMB: диалект {s['dialect']}, подпись "
                     + ("обязательна" if s.get("signing_required") else "не обязательна"), s["ip"])
+        if dev and "smb1" in s:  # в старых срезах SMB1 не проверялся — ключа нет
+            dev.facts["smb1"] = s["smb1"]
+            if s["smb1"]:
+                dev.add("smb", "SMB1: " + (s.get("smb1_detail") or "принят"), s["ip"])
 
     # 9. Этот компьютер: имя из системы
     host = meta.get("hostname")

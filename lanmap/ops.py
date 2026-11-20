@@ -85,7 +85,15 @@ def set_finding(check: str, target: str, status: str, reason: str | None = None)
         raise OpError(f"Нет такой проверки: {check}. Есть: {', '.join(security.BY_ID)}")
     if status not in security.STATUSES:
         raise OpError(f"Нет такого статуса: {status}. Есть: {', '.join(security.STATUSES)}")
-    snap, model = latest()
+    _snap, model = latest()
+    targets = _findings(model, check, target)
+    for f in targets:
+        security.set_status(check, f["key"], status, reason or None, ips=f.get("ips"), replace=f.get("status_uid"))
+    return targets
+
+
+def _findings(model: dict, check: str, target: str) -> list[dict]:
+    """Находки проверки в модели среза по IP, ключу, MAC устройства или all."""
     sec = model.get("security")
     if sec is None:
         raise OpError("В последнем срезе ещё нет проверок. Пересобери: python -m lanmap build")
@@ -95,9 +103,32 @@ def set_finding(check: str, target: str, status: str, reason: str | None = None)
         or (mac and "#" not in target and f["key"].partition("#")[0] == mac))]
     if not targets:
         raise OpError(f"В последнем срезе нет находки {check} для «{target}». Список: python -m lanmap finding list")
-    for f in targets:
-        security.set_status(check, f["key"], status, reason or None, ips=f.get("ips"), replace=f.get("status_uid"))
     return targets
+
+
+def recheck(check: str, target: str, probes=None) -> list[dict]:
+    """Перепроверить находку последнего среза по сети (только чтение, только своя подсеть) и запомнить итог.
+
+    → [{"finding": находка, "result": present|gone|unknown, "detail"}]. Отчёт вызывающий пересобирает сам."""
+    from lanmap import recheck as rc
+    from lanmap import security
+    from lanmap.collectors import ScanContext
+    check = check.upper()
+    if check not in security.BY_ID:
+        raise OpError(f"Нет такой проверки: {check}. Есть: {', '.join(security.BY_ID)}")
+    snap, model = latest()
+    targets = _findings(model, check, target)
+    net = pick_network()
+    ctx = ScanContext(local_ip=net.local_ip, network=net.network, gateway=net.gateway, if_index=net.if_index,
+                      local_mac=net.mac)
+    probes = probes or rc.Probes(ctx)
+    out = []
+    for f in targets:
+        res = rc.run(check, f, model, snap, ctx, probes)
+        security.record_recheck(check, f["key"], res["result"], res["detail"], ips=f.get("ips"),
+                                replace=f.get("status_uid"))
+        out.append({"finding": f, **res})
+    return out
 
 
 def set_check(code: str, status: str, note: str | None = None) -> dict:

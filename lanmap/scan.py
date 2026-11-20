@@ -10,7 +10,7 @@ import urllib.parse
 from pathlib import Path
 
 from lanmap import __version__, netinfo
-from lanmap.collectors import ScanContext, discovery, igd, protocols, tcp
+from lanmap.collectors import ScanContext, discovery, igd, protocols, tcp, windows
 from lanmap.collectors import dnswire
 from lanmap.ports import QUICK
 from lanmap.util import data_dir, now_iso, write_json
@@ -137,7 +137,7 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
         if router.get("skipped") or router.get("errors", {}).get("login"):
             progress.step("Данные роутера недоступны: " + (router.get("skipped") or router["errors"]["login"]))
 
-    progress.step("Имена (DNS, роутер, NetBIOS), UPnP-описания, ONVIF, SMB")
+    progress.step("Имена (DNS, роутер, NetBIOS), UPnP-описания, ONVIF, SMB (и SMB1)")
     ips = sorted(candidates)
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
         f_rdns = pool.map(protocols.reverse_dns, ips)
@@ -149,7 +149,7 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
             "netbios": [x for x in f_nb if x],
         }
         smb_hosts = [ip for ip, p in open_ports.items() if 445 in p]
-        f_smb = pool.map(lambda ip: protocols.smb_negotiate(ctx, ip), smb_hosts)
+        f_smb = pool.map(lambda ip: protocols.smb_probe(ctx, ip), smb_hosts)
         f_onvif = pool.map(lambda url: protocols.onvif_info(ctx, url), protocols.onvif_targets(ctx, wsd, open_ports))
         upnp = protocols.upnp_descriptions(ctx, multi.get("ssdp", []))
         smb, onvif = list(f_smb), list(f_onvif)
@@ -159,6 +159,7 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
     write_json(raw / "upnp_igd.json", igd.collect(ctx, upnp))
     write_json(raw / "onvif.json", onvif)
     write_json(raw / "smb.json", smb)
+    write_json(raw / "windows.json", windows.collect())
 
     meta["finished"] = now_iso()
     meta["stages"] = progress.stages

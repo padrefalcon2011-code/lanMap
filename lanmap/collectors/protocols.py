@@ -168,6 +168,55 @@ def smb_negotiate(ctx: ScanContext, ip: str) -> dict:
     return out
 
 
+def smb1_request() -> bytes:
+    """Согласование SMB1, в котором предложен только диалект NT LM 0.12 (без SMB2). Без входа."""
+    header = (b"\xffSMB" + bytes([0x72]) + b"\0" * 4 + bytes([0x18]) + struct.pack("<H", 0xC801)
+              + b"\0" * 12 + struct.pack("<HHHH", 0, 0xFEFF, 0, 0))
+    dialects = b"\x02NT LM 0.12\x00"
+    payload = header + bytes([0]) + struct.pack("<H", len(dialects)) + dialects
+    return struct.pack("!I", len(payload)) + payload
+
+
+def parse_smb1_reply(data: bytes) -> tuple[bool, str]:
+    """Ответ на smb1_request → (SMB1 принят?, пояснение). Пустой ответ — сервер оборвал соединение: SMB1 нет."""
+    if not data:
+        return False, "оборвал соединение в ответ на SMB1"
+    if data[4:8] == b"\xfeSMB":
+        return False, "ответил по SMB2"
+    if data[4:8] != b"\xffSMB" or len(data) < 39:
+        return False, "непонятный ответ"
+    status = struct.unpack_from("<I", data, 9)[0]
+    words = data[36]
+    index = struct.unpack_from("<H", data, 37)[0]
+    if status == 0 and words >= 1 and index == 0:
+        return True, "согласился на SMB1 (NT LM 0.12)"
+    return False, "отказался от SMB1"
+
+
+def smb1_negotiate(ctx: ScanContext, ip: str) -> dict:
+    """Говорит ли устройство по SMB1. smb1: True / False / None (не ответило — неизвестно)."""
+    out: dict = {"smb1": None}
+    try:
+        with socket.create_connection((ip, 445), timeout=3, source_address=(ctx.local_ip, 0)) as sock:
+            sock.settimeout(3)
+            sock.sendall(smb1_request())
+            try:
+                data = sock.recv(4096)
+            except ConnectionResetError:
+                data = b""
+        out["smb1"], out["smb1_detail"] = parse_smb1_reply(data)
+    except ConnectionRefusedError:
+        out["smb1"], out["smb1_detail"] = False, "порт 445 закрыт"
+    except Exception as exc:
+        out["smb1_detail"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
+def smb_probe(ctx: ScanContext, ip: str) -> dict:
+    """SMB2/3 (диалект, подпись) и SMB1 одним заходом."""
+    return {**smb_negotiate(ctx, ip), **smb1_negotiate(ctx, ip)}
+
+
 # ---------- имена ----------
 
 def reverse_dns(ip: str) -> tuple[str, str | None]:

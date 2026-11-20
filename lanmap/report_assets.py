@@ -586,8 +586,12 @@ if(L){
  $$('[data-finding]').forEach(c=>{const d=JSON.parse(c.dataset.finding);
   c.className='lv';
   c.innerHTML=FS.map(([k,i,t,cls])=>`<button class="sbtn ${cls}${d.status===k?' on':''}" data-st="${k}" title="${esc(t)}">${ico(i)}${esc(t)}</button>`).join('')
-   +`<input type="text" maxlength="300" placeholder="почему (для «оставляю»)" value="${esc(d.reason)}">`;
-  const inp=$('input',c);
+   +`<input type="text" maxlength="300" placeholder="почему (для «оставляю»)" value="${esc(d.reason)}">`
+   +(d.recheck?`<button class="sbtn rc" title="Проверить по сети ещё раз только эту находку">${ico('refresh')}перепроверить</button>`:'');
+  const inp=$('input',c),rc=$('.rc',c);
+  if(rc)rc.addEventListener('click',async()=>{rc.lastChild.textContent='проверяю…';
+   try{await api('/api/recheck',{check:d.check,key:d.key},c);back(c.dataset.id);}
+   catch(e){rc.lastChild.textContent='перепроверить';}});
   $$('[data-st]',c).forEach(b=>b.addEventListener('click',async()=>{
    try{await api('/api/finding',{check:d.check,key:d.key,status:b.dataset.st,reason:inp.value},c);back(c.dataset.id);}catch(e){}}));});
 

@@ -189,7 +189,7 @@ def _security(model: dict, labels: _Labels, by_key: dict) -> list[str]:
         for f in items:
             dev = by_key.get(f.get("key"))
             who = f"{labels.by_key[dev['key']]} ({_what(dev)})" if dev else "устройство вне среза"
-            status = sec_mod.STATUSES.get(f["status"], f["status"])
+            status = sec_mod.EFFECTIVE_NAMES.get(f["status"], f["status"])
             lines.append(f"- {who}: {labels.clean(f.get('detail') or '')} — П{f['priority']}, статус: {status}")
     skipped = sec.get("skipped") or {}
     if skipped:

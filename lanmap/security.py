@@ -45,8 +45,14 @@ STATUSES = {
     "accepted": "принята осознанно",
     "na": "не применимо",
 }
-# Находки с такими статусами не считаются «открытыми» (не попадают в счётчик и в красную зону)
-QUIET_STATUSES = {"accepted", "na"}
+# Статусы, которые программа выводит сама из отметки владельца, срезов и перепроверки
+EFFECTIVE_NAMES = {**STATUSES, "fixed_pending": "отмечена исправленной, ждёт перепроверки",
+                   "fixed_verified": "исправлена, перепроверено", "regress": "исправляли, но вернулась"}
+# Находки с такими статусами не считаются «открытыми» (не попадают в счётчик и в красную зону).
+# fixed_verified — отмечена исправленной, и перепроверка это подтвердила (после среза)
+QUIET_STATUSES = {"accepted", "na", "fixed_verified"}
+# Итоги перепроверки (поле checked в data/findings.json)
+RECHECK_NAMES = {"present": "на месте", "gone": "исчезла", "unknown": "нечем проверить"}
 
 NAS_EXTRA_PORTS = {3306: "MySQL/MariaDB (база данных)", 2049: "NFS (общие папки без учётных записей)",
                    111: "RPC (служба для NFS)", 548: "AFP (общие папки для старых Mac)", 21: "FTP (пароль открытым текстом)"}
@@ -241,6 +247,28 @@ def _smb_signing(ctx: Ctx) -> tuple[bool, list[dict]]:
         if d["alive"] and not d["is_local"] and s.get("status") == "0x0" and s.get("signing_required") is False:
             hits.append(_hit(d, f'SMB {SMB_DIALECTS.get(str(s.get("dialect")), s.get("dialect", "?"))}: подпись {"включена, но " if s.get("signing_enabled") else ""}'
                                 "не обязательна", "confirmed"))
+    return True, hits
+
+
+def _smb1(ctx: Ctx) -> tuple[bool, list[dict]]:
+    # Срез, в котором SMB1 не спрашивали, — «нечем проверить», а не «чисто»: признак — блок windows
+    # (новый сборщик пишет его всегда, на другой ОС — с пометкой skipped)
+    win = ctx.model.get("windows")
+    if win is None:
+        return False, []
+    hits = []
+    for d in ctx.devices:
+        if not d["alive"]:
+            continue
+        server = (d.get("facts") or {}).get("smb1") is True
+        client = bool(d["is_local"] and win.get("smb1_client"))
+        extra = {"platform": "windows"} if d["is_local"] and win.get("platform") == "windows" else {}
+        if server:
+            detail = "общие папки отвечают по SMB1" + (", клиент SMB1 тоже включён" if client else "")
+            hits.append(_hit(d, detail, "confirmed", port=445, extra={**extra, "smb1_client": client}))
+        elif client:
+            hits.append(_hit(d, "клиент SMB1 включён: компьютер сам может ходить к другим по SMB1", "confirmed",
+                             priority=3, extra={**extra, "smb1_client": True}))
     return True, hits
 
 
@@ -452,6 +480,45 @@ CHECKS: list[Check] = [
         detect=_nas_extra,
     ),
     Check(
+        id="SMB1_ENABLED", title="Общие папки по старому протоколу SMB1", icon="folder", priority=2,
+        criteria=["E4"], who="lan", stake=["files", "device"],
+        risk="SMB1 — протокол общих папок из 1980-х. В 2017 году шифровальщик WannaCry через его дыры сам "
+             "расползался по сетям за минуты. Дыры закрыты обновлениями, но протокол устарел целиком: Microsoft "
+             "выключает его по умолчанию и советует удалить. Заражённому компьютеру или гостю в сети хватит одного "
+             "открытого SMB1, чтобы попробовать добраться до файлов.",
+        scheme=[("home", "Кто-то в сети", "заражённый ПК, гость", "warn"), ("@dev", "", "говорит по SMB1", "")],
+        links=[("протокол 1980-х", "r")],
+        threat=[("bot", "червь вроде WannaCry"), ("lock", "зашифруют файлы")],
+        todo=[("search", "Узнай, кому нужен SMB1"), ("@dev", "Выключи SMB1"), ("wrench", "Старое — обнови или замени")],
+        steps=[
+            "Открой настройки общих папок устройства (SMB, CIFS, «Сеть Windows») и поставь минимальный протокол "
+            "SMB2 или выше.",
+            "Такого пункта нет — обнови прошивку: в новых версиях он часто появляется.",
+            "Нет и в новой прошивке — устройство устарело. Держи на нём файлы только с копией в другом месте и "
+            "планируй замену: пока оно в сети, компьютерам нужен клиент SMB1, чтобы его открывать.",
+        ],
+        vendor_steps={
+            "windows": [
+                "Сначала узнай, кому нужен SMB1. Старые NAS, которые открываются только по SMB1, LanMap показывает в "
+                "этой же карточке: пока они в сети, клиент SMB1 на компьютере нужен.",
+                "Кто сам ходит к компьютеру по SMB1 (например, старый МФУ сохраняет сканы в папку): PowerShell от "
+                "имени администратора → Set-SmbServerConfiguration -AuditSmb1Access $true. Через неделю — «Просмотр "
+                "событий → Журналы приложений и служб → Microsoft → Windows → SMBServer → Audit», событие 3000: там "
+                "адреса таких устройств.",
+                "Никому не нужен — «Панель управления → Программы → Включение или отключение компонентов Windows» → "
+                "сними «Поддержка общего доступа к файлам SMB 1.0/CIFS» → перезагрузи компьютер.",
+                "Старый NAS открывается только по SMB1 и заменить его пока нельзя — раскрой этот пункт и сними только "
+                "«Сервер SMB 1.0/CIFS»: клиент оставь до замены NAS.",
+            ],
+        },
+        breaks="Перестанут открываться папки на старых устройствах, которые умеют только SMB1 (старые NAS и "
+               "медиаплееры), и сохранение сканов в папку у старых МФУ.",
+        rollback="Windows: верни галочку «Поддержка общего доступа к файлам SMB 1.0/CIFS» в компонентах и перезагрузи. "
+                 "Устройство: верни минимальный протокол SMB1 в его настройках.",
+        verify="Кнопка «Перепроверить» или новый срез: устройство отказывается говорить по SMB1.",
+        detect=_smb1, needs="в срезе SMB1 ещё не проверялся — сделай новый срез",
+    ),
+    Check(
         id="SMB_SIGNING", title="Общие папки без обязательной подписи (SMB)", icon="lock", priority=3,
         criteria=["E4"], who="lan", stake=["files"],
         risk="Когда ты копируешь файлы с этого устройства или на него, злоумышленник в сети теоретически может "
@@ -513,24 +580,60 @@ def set_status(check_id: str, key: str, status: str, reason: str | None = None, 
     # Отметка могла сработать по адресу или серийнику (каскад): снимаем именно её, иначе она продолжит переноситься
     if replace and replace != u:
         items.pop(replace, None)
+    # Отметка владельца новее перепроверки: старый итог перепроверки больше не показываем
     if status == "open":
         items.pop(u, None)
         entry = {"status": "open"}
     else:
-        entry = {"status": status, "updated": now_iso()}
+        entry = _anchored({"status": status, "updated": now_iso()}, key, ips)
         if reason:
             entry["reason"] = reason
-        # Якоря для каскада: по ним отметка найдётся, даже если ключ устройства сменится
-        mac, _, serial = key.partition("#")
-        if ips:
-            entry["ips"] = list(ips)
-        if mac and not mac.startswith("ip:"):
-            entry["mac"] = mac
-        if serial:
-            entry["serial"] = serial
         items[u] = entry
     write_json(statuses_path(), data)
     return entry
+
+
+def _anchored(entry: dict, key: str, ips: list[str] | None) -> dict:
+    """Якоря для каскада: по ним отметка найдётся, даже если ключ устройства сменится."""
+    mac, _, serial = key.partition("#")
+    if ips:
+        entry["ips"] = list(ips)
+    if mac and not mac.startswith("ip:"):
+        entry["mac"] = mac
+    if serial:
+        entry["serial"] = serial
+    return entry
+
+
+def record_recheck(check_id: str, key: str, result: str, detail: str, ips: list[str] | None = None,
+                   replace: str | None = None) -> dict:
+    """Итог перепроверки находки → data/findings.json.
+
+    gone — находка исправлена, и это подтверждено (статус fixed). present при отметке «исправлена» — отметка
+    снимается: находка на месте. «Принята осознанно» и «не применимо» перепроверка не трогает, только помнит итог.
+    """
+    if check_id not in BY_ID:
+        raise ValueError(f"Нет такой проверки: {check_id}")
+    if result not in RECHECK_NAMES:
+        raise ValueError(f"Нет такого итога перепроверки: {result}")
+    data = read_json(statuses_path(), {}) or {}
+    items = data.setdefault("findings", {})
+    u = uid(check_id, key)
+    old = items.pop(replace, None) if replace and replace != u else None
+    old = old or items.get(u) or {}
+    status = old.get("status", "open")
+    at = now_iso()
+    entry = {k: v for k, v in old.items() if k not in ("ips", "mac", "serial")}
+    if result == "gone" and status not in ("accepted", "na"):
+        entry.update(status="fixed", updated=at)
+    elif result == "present" and status == "fixed":
+        entry["status"] = "open"
+        entry.pop("updated", None)
+    entry.setdefault("status", "open")
+    entry["checked"] = {"at": at, "result": result, "detail": detail}
+    items[u] = _anchored(entry, key, ips)
+    write_json(statuses_path(), data)
+    return items[u]
 
 
 def _anchor_sets(key: str, ips=None) -> dict[str, set[str]]:
@@ -598,17 +701,24 @@ def _after(a: str | None, b: str | None) -> bool:
 
 
 def _effective(saved: dict | None, started: str) -> dict:
-    """Статус находки с учётом отметки владельца. Исправленная, но снова видимая находка — регресс."""
+    """Статус находки с учётом отметки владельца и перепроверки. Исправленная, но снова видимая находка — регресс."""
     if not saved:
         return {"status": "open"}
     status = saved.get("status", "open")
     out = {"status": status, "updated": saved.get("updated"), "reason": saved.get("reason")}
+    checked = saved.get("checked")
+    # Итог перепроверки показываем, только пока он свежее среза: новый срез знает больше
+    if checked and not _after(started, checked.get("at")):
+        out["checked"] = checked
+    else:
+        checked = None
     if status == "fixed":
-        # Срез сделан после отметки «исправлено», а находка на месте — вернулась
         if _after(started, saved.get("updated")):
-            out["status"] = "regress"
+            out["status"] = "regress"  # срез сделан после отметки «исправлено», а находка на месте — вернулась
+        elif checked and checked.get("result") == "gone":
+            out["status"] = "fixed_verified"  # перепроверка подтвердила
         else:
-            out["status"] = "fixed_pending"  # отмечено, ждёт перепроверки новым срезом
+            out["status"] = "fixed_pending"  # отмечено, ждёт перепроверки
     return out
 
 
@@ -668,7 +778,8 @@ def device_steps(check: Check, finding: dict, router_vendor: str | None = None) 
     """Инструкция «куда зайти, что нажать» для одного устройства находки.
     Возвращает (шаги, подобрана ли часть про устройство под его производителя, марка роутера, если подобрана
     часть про роутер)."""
-    name, steps = _pick({"": check.steps, **check.vendor_steps}, finding.get("vendor"))
+    # Этот компьютер: инструкция под его ОС (ключ platform), а не под производителя железа
+    name, steps = _pick({"": check.steps, **check.vendor_steps}, finding.get("platform") or finding.get("vendor"))
     rname = None
     if check.router_steps:
         rname, rsteps = _pick(check.router_steps, router_vendor)

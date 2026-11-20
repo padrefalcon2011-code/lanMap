@@ -69,6 +69,8 @@ def make_model(snapshot: Path, reg: dict | None = None) -> dict:
         "router_skipped": (read_json(snapshot / "raw" / "router.json") or {}).get("skipped"),
         # UPnP-пробросы, прочитанные у шлюза без пароля (в старых срезах файла нет — тогда None)
         "igd": igd.normalize(read_json(snapshot / "raw" / "upnp_igd.json")),
+        # Этот компьютер: то, что по сети не видно (клиент SMB1). В старых срезах файла нет — None
+        "windows": read_json(snapshot / "raw" / "windows.json"),
         "devices": devs,
     }
     model["security"] = security.evaluate(model, snapshot, changes.tested_ports(snapshot))

@@ -155,13 +155,28 @@ def cmd_finding(args) -> int:
         if not sec["findings"]:
             print("Находок нет.")
         for f in sec["findings"]:
-            status = security.STATUSES.get(f["status"], {"regress": "вернулась", "fixed_pending": "ждёт перепроверки"}
-                                           .get(f["status"], f["status"]))
+            status = security.EFFECTIVE_NAMES.get(f["status"], f["status"])
             print(f'П{f["priority"]}  {f["id"]:<20} {", ".join(f["ips"]) or f["key"]:<16} {status:<18} {f["detail"]}')
         for cid, why in sec.get("skipped", {}).items():
             print(f"не проверялось: {cid} — {why}")
         print("\nОтметить: python -m lanmap finding set <ПРОВЕРКА> <IP|MAC|all> <статус> [--reason «почему»]")
+        print("Перепроверить по сети: python -m lanmap finding recheck <ПРОВЕРКА> <IP|MAC|all>")
         print("Статусы: " + ", ".join(f"{k} ({v})" for k, v in security.STATUSES.items()))
+        return 0
+
+    if args.action == "recheck":
+        if not args.check or not args.target:
+            raise SystemExit("Нужно: finding recheck <ПРОВЕРКА> <IP|MAC|all>")
+        from lanmap import ops
+        try:
+            results = ops.recheck(args.check, args.target)
+            ops.rebuild()
+        except ops.OpError as exc:
+            raise SystemExit(str(exc))
+        for r in results:
+            f = r["finding"]
+            print(f'{f["id"]} · {f["title"]}: {security.RECHECK_NAMES[r["result"]]} — {r["detail"]}')
+        print(f"Отчёт пересобран: {snap / 'report.html'}")
         return 0
 
     if not args.check or not args.target or not args.status:
@@ -318,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_confirm)
 
     p = sub.add_parser("finding", help="находки безопасности: список и отметки (в работе, исправлена, принята…)")
-    p.add_argument("action", choices=["list", "set"])
+    p.add_argument("action", choices=["list", "set", "recheck"])
     p.add_argument("check", nargs="?", help="идентификатор проверки, например TELNET_OPEN")
     p.add_argument("target", nargs="?", help="IP или MAC устройства из последнего среза, или all")
     p.add_argument("status", nargs="?", help="open, in_progress, fixed, accepted, na")

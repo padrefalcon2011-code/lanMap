@@ -1433,6 +1433,196 @@ class AskAiTest(unittest.TestCase):
         self.assertIn('id="askai" data-askai="', page)
 
 
+def smb1_reply(words: int, index: int, status: int = 0) -> bytes:
+    """Ответ сервера на согласование SMB1 (заголовок + число слов + номер диалекта)."""
+    smb = (b"\xffSMB" + bytes([0x72]) + struct.pack("<I", status) + bytes([0x88]) + b"\x01\xc8" + b"\0" * 12
+           + struct.pack("<HHHH", 0, 0xFEFF, 0, 0) + bytes([words]) + struct.pack("<H", index) + b"\0" * 4)
+    return struct.pack("!I", len(smb)) + smb
+
+
+class Smb1Test(unittest.TestCase):
+    def test_parse_reply(self):
+        from lanmap.collectors import protocols
+        self.assertEqual(protocols.parse_smb1_reply(smb1_reply(17, 0))[0], True)
+        self.assertEqual(protocols.parse_smb1_reply(smb1_reply(1, 0xFFFF))[0], False)  # «ни один диалект не подошёл»
+        self.assertEqual(protocols.parse_smb1_reply(b"")[0], False)                     # оборвал соединение
+        self.assertEqual(protocols.parse_smb1_reply(b"\0\0\0\x40\xfeSMB" + b"\0" * 60)[0], False)
+        req = protocols.smb1_request()
+        self.assertEqual(req[4:9], b"\xffSMB\x72")
+        self.assertIn(b"NT LM 0.12", req)
+        self.assertNotIn(b"SMB 2", req)  # SMB2 не предлагаем: иначе сервер ответит по SMB2
+
+    def net(self, windows):
+        devs = [sdev("00:00:5E:00:53:0D", "192.0.2.20", "nas", ports=[445], vendor="D-Link", facts={"smb1": True}),
+                sdev("00:00:5E:00:53:0E", "192.0.2.30", "computer", ports=[445], local=True, facts={"smb1": False}),
+                sdev("00:00:5E:00:53:0F", "192.0.2.40", "nas", ports=[445], facts={"smb1": False})]
+        m = model(devs)
+        m["windows"] = windows
+        return m
+
+    def test_detect(self):
+        from lanmap import security
+        snap = SecurityTest.snap(SecurityTest())
+        sec = security.evaluate(self.net(None), snap, None, {})
+        self.assertFalse(sec["evaluated"]["SMB1_ENABLED"])  # срез без проверки SMB1 — не «чисто»
+        sec = security.evaluate(self.net({"platform": "windows", "smb1_client": True}), snap, None, {})
+        found = {f["ips"][0]: f for f in sec["findings"] if f["id"] == "SMB1_ENABLED"}
+        self.assertEqual(sorted(found), ["192.0.2.20", "192.0.2.30"])
+        self.assertEqual(found["192.0.2.20"]["priority"], 2)  # сервер SMB1
+        self.assertEqual(found["192.0.2.30"]["priority"], 3)  # только клиент на этом компьютере
+        steps, exact, _ = security.device_steps(security.BY_ID["SMB1_ENABLED"], found["192.0.2.30"])
+        self.assertTrue(exact)
+        self.assertTrue(any("SMB 1.0/CIFS" in s for s in steps))  # инструкция под Windows
+        steps, exact, _ = security.device_steps(security.BY_ID["SMB1_ENABLED"], found["192.0.2.20"])
+        self.assertFalse(exact)
+        sec = security.evaluate(self.net({"platform": "windows", "smb1_client": False}), snap, None, {})
+        self.assertEqual([f["ips"][0] for f in sec["findings"] if f["id"] == "SMB1_ENABLED"], ["192.0.2.20"])
+
+    def test_windows_client(self):
+        from lanmap.collectors import windows
+        self.assertTrue(windows.smb1_client(2))
+        self.assertFalse(windows.smb1_client(4))     # служба отключена
+        self.assertFalse(windows.smb1_client(None))  # компонент удалён
+
+
+class FakeProbes:
+    """Подставная сеть для перепроверки: ARP, порты, ping, SMB, роутер."""
+
+    def __init__(self, macs=None, ports=None, ping=False, smb=None, router=None):
+        self.macs, self.ports, self.alive, self.smb_reply, self.router_raw = macs or {}, ports or {}, ping, smb, router
+        self.asked: list = []
+
+    def mac(self, ip):
+        return self.macs.get(ip)
+
+    def tcp(self, ip, port):
+        self.asked.append((ip, port))
+        return self.ports.get(port, "silent")
+
+    def ping(self, ip):
+        return self.alive
+
+    def smb(self, ip):
+        return self.smb_reply or {"smb1": None}
+
+    def windows(self):
+        return {"platform": "windows", "smb1_client": False}
+
+    def onvif(self, url):
+        return {"error": "timeout"}
+
+    def router(self):
+        return self.router_raw
+
+    def igd(self, descriptions):
+        return {"gateways": []}
+
+
+class RecheckTest(unittest.TestCase):
+    CTX = ScanContext(local_ip="192.0.2.30", network=NET, gateway="192.0.2.1", if_index=1)
+
+    def setUp(self):
+        from lanmap import security
+        write_json(security.statuses_path(), {})
+        self.snap = SecurityTest.snap(SecurityTest())
+        self.m = SecurityTest.net(SecurityTest())
+        self.m["windows"] = {"platform": "windows", "smb1_client": False}
+        self.m["security"] = security.evaluate(self.m, self.snap, SecurityTest.TESTED, {})
+
+    def finding(self, check_id):
+        return next(f for f in self.m["security"]["findings"] if f["id"] == check_id)
+
+    def run_rc(self, check_id, probes):
+        from lanmap import recheck
+        return recheck.run(check_id, self.finding(check_id), self.m, self.snap, self.CTX, probes)
+
+    def test_port_present_gone_offline(self):
+        on_link = {"192.0.2.10": MAC_C}
+        self.assertEqual(self.run_rc("CAMERA_XM_PORT", FakeProbes(on_link, {34567: "open"}))["result"], "present")
+        self.assertEqual(self.run_rc("CAMERA_XM_PORT", FakeProbes(on_link, {34567: "closed"}))["result"], "gone")
+        # Не ответило ни на ARP, ни на порт, ни на ping — выключено, а не исправлено
+        self.assertEqual(self.run_rc("CAMERA_XM_PORT", FakeProbes())["result"], "unknown")
+        # ARP молчит, но порт ответил отказом — устройство на связи
+        self.assertEqual(self.run_rc("CAMERA_XM_PORT", FakeProbes({}, {34567: "closed"}))["result"], "gone")
+        self.assertEqual(self.run_rc("CAMERA_XM_PORT", FakeProbes({}, {}, ping=True))["result"], "gone")
+
+    def test_address_taken_by_other(self):
+        res = self.run_rc("CAMERA_XM_PORT", FakeProbes({"192.0.2.10": MAC_B}, {34567: "closed"}))
+        self.assertEqual(res["result"], "unknown")
+
+    def test_shared_address_picks_own_mac(self):
+        """Заводской адрес на несколько камер: перепроверяем по тому адресу, где отвечает этот MAC."""
+        cam = next(d for d in self.m["devices"] if d["key"] == MAC_C)
+        cam["ips"] = ["192.0.2.10", "192.0.2.15"]
+        f = self.finding("CAMERA_XM_PORT")
+        f["ips"] = cam["ips"]
+        from lanmap import recheck
+        probes = FakeProbes({"192.0.2.10": MAC_B, "192.0.2.15": MAC_C}, {34567: "closed"})
+        self.assertEqual(recheck.run("CAMERA_XM_PORT", f, self.m, self.snap, self.CTX, probes)["result"], "gone")
+        self.assertEqual(probes.asked, [("192.0.2.15", 34567)])
+
+    def test_out_of_scope_is_not_probed(self):
+        from lanmap import recheck
+        f = {**self.finding("CAMERA_XM_PORT"), "ips": ["198.51.100.7"]}
+        probes = FakeProbes({}, {34567: "closed"})
+        self.assertEqual(recheck.run("CAMERA_XM_PORT", f, self.m, self.snap, self.CTX, probes)["result"], "unknown")
+        self.assertEqual(probes.asked, [])
+
+    def test_smb_signing(self):
+        nas = {"192.0.2.20": "00:00:5E:00:53:0D"}
+        weak = {"status": "0x0", "dialect": "0x311", "signing_required": False, "smb1": False}
+        self.assertEqual(self.run_rc("SMB_SIGNING", FakeProbes(nas, smb=weak))["result"], "present")
+        self.assertEqual(self.run_rc("SMB_SIGNING", FakeProbes(nas, smb={**weak, "signing_required": True}))["result"],
+                         "gone")
+
+    def test_forwards_from_router(self):
+        from lanmap import security
+        fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
+        self.m["router"] = {"forwards": [fw]}
+        self.m["security"] = security.evaluate(self.m, self.snap, SecurityTest.TESTED, {})
+        f = self.finding("UPNP_PORT_MAPPINGS")
+        from lanmap import recheck
+        from unittest import mock
+        with mock.patch("lanmap.routers.normalize", side_effect=lambda raw: raw):
+            still = recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, FakeProbes(router={"forwards": [fw]}))
+            gone = recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, FakeProbes(router={"forwards": []}))
+            unknown = recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, FakeProbes(router=None))
+        self.assertEqual((still["result"], gone["result"], unknown["result"]), ("present", "gone", "unknown"))
+
+    def test_record_and_effective(self):
+        from lanmap import security
+        key = MAC_C
+        u = security.uid("CAMERA_XM_PORT", key)
+        # Исчезла → «исправлена», и перепроверка это подтверждает, пока срез старше перепроверки
+        security.record_recheck("CAMERA_XM_PORT", key, "gone", "порт закрыт", ips=["192.0.2.10"])
+        saved = security.load_statuses()[u]
+        self.assertEqual(saved["status"], "fixed")
+        self.assertEqual(security._effective(saved, "2000-01-01T00:00:00")["status"], "fixed_verified")
+        self.assertIn("fixed_verified", security.QUIET_STATUSES)  # подтверждённая не считается открытой
+        # Новый срез после перепроверки снова видит находку — вернулась
+        self.assertEqual(security._effective(saved, "2999-01-01T00:00:00")["status"], "regress")
+        # На месте при отметке «исправлена» — отметка снимается
+        security.set_status("CAMERA_XM_PORT", key, "fixed")
+        security.record_recheck("CAMERA_XM_PORT", key, "present", "порт открыт")
+        saved = security.load_statuses()[u]
+        self.assertEqual(saved["status"], "open")
+        eff = security._effective(saved, "2000-01-01T00:00:00")
+        self.assertEqual((eff["status"], eff["checked"]["result"]), ("open", "present"))
+        # «Принята осознанно» перепроверка не трогает
+        security.set_status("CAMERA_XM_PORT", key, "accepted", "так надо")
+        security.record_recheck("CAMERA_XM_PORT", key, "gone", "порт закрыт")
+        self.assertEqual(security.load_statuses()[u]["status"], "accepted")
+
+    def test_report_chip_and_button(self):
+        from lanmap import report, security
+        security.record_recheck("CAMERA_XM_PORT", MAC_C, "present", "порт 34567 открыт", ips=["192.0.2.10"])
+        self.m["security"] = security.evaluate(self.m, self.snap, SecurityTest.TESTED)
+        html_ = report._security(self.m)
+        self.assertIn("finding recheck CAMERA_XM_PORT", html_)
+        self.assertIn("на месте", html_)
+        self.assertIn('&quot;recheck&quot;: true', html_)
+
+
 class NoNetworkSpecificsTest(unittest.TestCase):
     def test_no_control_characters(self):
         for path in list(PACKAGE_DIR.rglob("*.py")) + list(PACKAGE_DIR.rglob("*.json")):

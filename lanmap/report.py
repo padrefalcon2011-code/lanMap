@@ -15,6 +15,7 @@ from lanmap import askai as askai_mod
 from lanmap import forwards as fw_mod
 from lanmap import security as sec_mod
 from lanmap import share as share_mod
+from lanmap.recheck import SUPPORTED as RECHECKABLE
 from lanmap.devices import connection_text
 from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
 from lanmap.report_assets import CSS, ICONS, JS, SETUP_JS
@@ -479,7 +480,8 @@ STAKE_ICONS = {"files": "folder", "video": "eye", "network": "router", "device":
 CONF_ICONS = {"confirmed": "check", "likely": "question", "verify": "search"}
 STATUS_CHIPS = {
     "in_progress": ("wrench", "в работе", ""),
-    "fixed_pending": ("check", "отмечена исправленной, ждёт нового среза", "good"),
+    "fixed_pending": ("check", "отмечена исправленной, ждёт перепроверки", "good"),
+    "fixed_verified": ("check", "исправлена — перепроверено", "good"),
     "regress": ("alert", "исправляли, но вернулась", "crit"),
     "accepted": ("check", "принята осознанно", ""),
     "na": ("minus", "не применимо", ""),
@@ -509,6 +511,18 @@ def _status_chip(f: dict) -> str:
 
 
 STATUS_VIA = {"ip": "по адресу", "serial": "по серийному номеру", "mac": "по MAC"}
+RECHECK_CHIPS = {"present": ("refresh", "на месте", "crit"), "unknown": ("question", "не проверить", "")}
+
+
+def _recheck_chip(f: dict) -> str:
+    """Итог перепроверки, если он свежее среза. «Исчезла» уже видно по статусу «исправлена — перепроверено»."""
+    c = f.get("checked") or {}
+    if c.get("result") not in RECHECK_CHIPS:
+        return ""
+    ico, text, cls = RECHECK_CHIPS[c["result"]]
+    at = (c.get("at") or "")[11:16]
+    title = f'Перепроверено{" в " + at if at else ""}: {sec_mod.RECHECK_NAMES[c["result"]]} — {c.get("detail") or ""}'
+    return f'<span class="st {cls}" title="{e(title)}">{icon(ico, "s")}{e(at + " " + text if at else text)}</span>'
 
 
 def plural(n: int, forms: tuple[str, str, str]) -> str:
@@ -558,7 +572,8 @@ def _dev_row(check, f: dict, present: set[str], rvendor: str | None) -> str:
             f'{icon("open", "s")}</button>' if f["key"] in present else "")
     steps, exact, rname = sec_mod.device_steps(check, f, rvendor)
     ol = "".join(f"<li>{e(s)}</li>" for s in steps) + f'<li class="vfy">{e(check.verify)}</li>'
-    kind = (f'<span class="vend">{icon("check", "s")}под {e(f.get("vendor") or "это устройство")}</span>' if exact
+    target_name = (f.get("platform") or "").capitalize() or f.get("vendor") or "это устройство"
+    kind = (f'<span class="vend">{icon("check", "s")}под {e(target_name)}</span>' if exact
             else f'<span class="vend gen">{icon("info", "s")}общая инструкция: названия пунктов у разных '
                  f'производителей отличаются</span>')
     if rname:
@@ -566,16 +581,27 @@ def _dev_row(check, f: dict, present: set[str], rvendor: str | None) -> str:
     target = f["ips"][0] if f.get("ips") else f["key"]
     cmd = f'python -m lanmap finding set {check.id} {target} accepted --reason "…"'
     quiet = " quiet" if f["status"] in sec_mod.QUIET_STATUSES else ""
-    now = {"fixed_pending": "fixed", "regress": "open"}.get(f["status"], f["status"])
-    mark = {"check": check.id, "key": f["key"], "status": now, "reason": f.get("reason") or ""}
+    now = {"fixed_pending": "fixed", "fixed_verified": "fixed", "regress": "open"}.get(f["status"], f["status"])
+    mark = {"check": check.id, "key": f["key"], "status": now, "reason": f.get("reason") or "",
+            "recheck": check.id in RECHECKABLE}
     return (f'<details class="drow{quiet}"><summary>{icon("chevron", "s chev")}'
             f'<span class="who"><span style="color:{color};display:inline-flex">{icon(type_icon(f.get("type")))}</span>'
-            f'{e(f["title"])}</span>{ip}<span class="det">{e(f["detail"])}</span>{conf}{_status_chip(f)}{goto}</summary>'
+            f'{e(f["title"])}</span>{ip}<span class="det">{e(f["detail"])}</span>{conf}{_status_chip(f)}{_recheck_chip(f)}'
+            f'{goto}</summary>'
             f'<div class="dbody">{kind}<ol>{ol}</ol>'
             f'<div class="cli" data-finding="{live(mark)}" data-id="f|{e(check.id)}|{e(f["key"])}">'
             f'Отметить (in_progress, fixed, accepted — оставляю осознанно): <code>{e(cmd)}</code>'
             f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
-            f'<span class="lbl">копировать</span></button></div></div></details>')
+            f'<span class="lbl">копировать</span></button>{_recheck_cmd(check, target)}</div></div></details>')
+
+
+def _recheck_cmd(check, target: str) -> str:
+    """Команда перепроверки для отчёта без сервера (в веб-интерфейсе вместо неё кнопка)."""
+    if check.id not in RECHECKABLE:
+        return ""
+    cmd = f"python -m lanmap finding recheck {check.id} {target}"
+    return (f'<br>Исправил — перепроверь: <code>{e(cmd)}</code><button class="act" data-copy="{e(cmd)}" '
+            f'title="Скопировать команду">{icon("copy", "s")}<span class="lbl">копировать</span></button>')
 
 
 def _finding_card(check, items: list[dict], present: set[str], rvendor: str | None) -> str:

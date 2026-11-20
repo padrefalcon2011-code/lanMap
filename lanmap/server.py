@@ -382,7 +382,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(500, {"error": f"Ошибка LanMap: {exc}"})
             self.state.stop_watch()  # «Найти устройство» перезапустится уже без роутера
             return self._json(200, {"ok": True, "removed": removed})
-        action = {"/api/sign": self._sign, "/api/finding": self._finding, "/api/check": self._check}.get(route)
+        action = {"/api/sign": self._sign, "/api/finding": self._finding, "/api/check": self._check,
+                  "/api/recheck": self._recheck}.get(route)
         if not action:
             return self._json(404, {"error": "не найдено"})
         if self.state.scan_status()["running"]:
@@ -441,6 +442,11 @@ class Handler(BaseHTTPRequestHandler):
         found = ops.set_finding(self._str(body, "check"), self._str(body, "key"), self._str(body, "status"),
                                 self._str(body, "reason", required=False))
         return {"count": len(found)}
+
+    def _recheck(self, body: dict) -> dict:
+        """Перепроверка находки по сети (только чтение, своя подсеть): несколько секунд."""
+        done = ops.recheck(self._str(body, "check"), self._str(body, "key"))
+        return {"results": [{"result": r["result"], "detail": r["detail"]} for r in done]}
 
     def _check(self, body: dict) -> dict:
         entry = ops.set_check(self._str(body, "code"), self._str(body, "status"), self._str(body, "note", required=False))
