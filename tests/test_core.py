@@ -1589,6 +1589,50 @@ class RecheckTest(unittest.TestCase):
             unknown = recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, FakeProbes(router=None))
         self.assertEqual((still["result"], gone["result"], unknown["result"]), ("present", "gone", "unknown"))
 
+    def test_silence_is_not_fixed(self):
+        """Устройство на связи (ARP), но проверяемая служба промолчала — «нечем проверить», а не «исчезла»."""
+        from lanmap import recheck, security
+        nas = {"192.0.2.20": "00:00:5E:00:53:0D"}
+        self.assertEqual(self.run_rc("SMB_SIGNING", FakeProbes(nas, smb={"error": "timeout", "smb1": None}))["result"],
+                         "unknown")
+        self.assertEqual(self.run_rc("SMB_SIGNING", FakeProbes(nas, smb={"smb1": False, "port_closed": True}))["result"],
+                         "gone")
+        cam = {"192.0.2.10": MAC_C}
+        self.assertEqual(self.run_rc("CAMERA_ONVIF_ANON", FakeProbes(cam))["result"], "unknown")  # ONVIF: тайм-аут
+        # Этот компьютер: SMB1 к себе не ответил, клиент выключен — всё равно не «исчезла»
+        f = {"id": "SMB1_ENABLED", "key": "00:00:5E:00:53:0E", "ips": ["192.0.2.30"], "port": 445}
+        res = recheck.run("SMB1_ENABLED", f, self.m, self.snap, self.CTX, FakeProbes(smb={"smb1": None}))
+        self.assertEqual(res["result"], "unknown")
+        res = recheck.run("SMB1_ENABLED", f, self.m, self.snap, self.CTX, FakeProbes(smb={"smb1": False}))
+        self.assertEqual(res["result"], "gone")
+        # ADB только по объявлению mDNS: порт 5555 тут ни при чём
+        adb = {"id": "ADB_EXPOSED", "key": MAC_C, "ips": ["192.0.2.10"]}
+        res = recheck.run("ADB_EXPOSED", adb, self.m, self.snap, self.CTX, FakeProbes(cam, {5555: "closed"}))
+        self.assertEqual(res["result"], "unknown")
+        # Обрезанный ответ SMB1 — не «SMB1 нет»
+        from lanmap.collectors import protocols
+        self.assertIsNone(protocols.parse_smb1_reply(smb1_reply(17, 0)[:30])[0])
+        self.assertIn("SMB1_ENABLED", security.BY_ID)
+
+    def test_router_partial_or_other_network(self):
+        from lanmap import recheck, security
+        from unittest import mock
+        fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
+        self.m["router"] = {"forwards": [fw]}
+        self.m["security"] = security.evaluate(self.m, self.snap, SecurityTest.TESTED, {})
+        f = self.finding("UPNP_PORT_MAPPINGS")
+        with mock.patch("lanmap.routers.normalize", side_effect=lambda raw: raw):
+            partial = FakeProbes(router={"forwards": [], "errors": {"upnp_redirects": "HTTP 500"}})
+            self.assertEqual(recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, partial)["result"],
+                             "unknown")
+            other = FakeProbes({"192.0.2.1": MAC_C}, router={"forwards": []})  # у шлюза чужой MAC
+            self.assertEqual(recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, other)["result"],
+                             "unknown")
+        self.m["meta"]["interface"] = {"network": "198.51.100.0/24"}
+        res = recheck.run("CAMERA_XM_PORT", self.finding("CAMERA_XM_PORT"), self.m, self.snap, self.CTX,
+                          FakeProbes({"192.0.2.10": MAC_C}, {34567: "closed"}))
+        self.assertEqual(res["result"], "unknown")
+
     def test_record_and_effective(self):
         from lanmap import security
         key = MAC_C

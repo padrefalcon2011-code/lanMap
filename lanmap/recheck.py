@@ -95,8 +95,11 @@ def run(check_id: str, finding: dict, model: dict, snapshot: Path, ctx: ScanCont
     if check is None or check_id not in SUPPORTED:
         return _out("unknown", "эту проверку пока можно повторить только новым срезом")
     raw = Path(snapshot) / "raw"
+    snap_net = ((model.get("meta") or {}).get("interface") or {}).get("network")
+    if snap_net and snap_net != ctx.network:
+        return _out("unknown", f"компьютер сейчас в другой сети ({ctx.network}), а срез — из {snap_net}")
     if check_id in FORWARD_CHECKS:
-        return _forwards(check, finding, model, raw, probes)
+        return _forwards(check, finding, model, raw, probes, ctx)
 
     ips = [x for x in finding.get("ips") or [] if ctx.in_scope(x)]
     if not ips:
@@ -118,11 +121,17 @@ def run(check_id: str, finding: dict, model: dict, snapshot: Path, ctx: ScanCont
         elif any(mac for _, mac in answers):
             return _out("unknown", "по адресу устройства теперь другое устройство — сделай новый срез")
 
+    if check_id == "ADB_EXPOSED" and finding.get("port") is None:
+        # ADB найден только по объявлению mDNS (беспроводная отладка Android 11+ — на случайном порту)
+        return _out("unknown", "ADB виден только по объявлению в сети — перепроверит новый срез")
+
     fresh = copy.deepcopy(dev)
     fresh["alive"] = True
     facts = fresh.setdefault("facts", {})
     windows = model.get("windows")
 
+    # Дал ли опрос определённый ответ: без него отсутствие находки — не «исчезла», а «нечем проверить»
+    definite = True
     if check_id in PORTS:
         ports = PORTS[check_id]
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(ports)) as pool:
@@ -136,10 +145,12 @@ def run(check_id: str, finding: dict, model: dict, snapshot: Path, ctx: ScanCont
         alive = alive or s.get("smb1") is not None or bool(s.get("status"))
         facts["smb"] = s if s.get("dialect") else None
         facts["smb1"] = s.get("smb1")
-        if check_id == "SMB1_ENABLED" and local:
-            windows = probes.windows()
-        if check_id == "SMB1_ENABLED" and s.get("smb1") is None and not (local and windows):
-            return _out("unknown", "устройство не ответило по SMB")
+        if check_id == "SMB1_ENABLED":
+            definite = s.get("smb1") is not None
+            if local:
+                windows = probes.windows()
+        else:
+            definite = bool(s.get("status")) or bool(s.get("port_closed"))
     elif check_id == "CAMERA_ONVIF_ANON":
         known = next((o.get("url") for o in read_json(raw / "onvif.json", []) or [] if o.get("ip") == ip), None)
         o = probes.onvif(known or f"http://{ip}/onvif/device_service")
@@ -147,7 +158,8 @@ def run(check_id: str, finding: dict, model: dict, snapshot: Path, ctx: ScanCont
             facts["onvif"] = {**(o.get("fields") or {}), "anonymous": True}
         else:
             facts["onvif"] = {"auth_required": True} if o.get("auth_required") else {}
-        alive = alive or bool(o.get("anonymous")) or str(o.get("error") or "").startswith("HTTP")
+        definite = bool(o.get("anonymous") or o.get("auth_required") or str(o.get("error") or "").startswith("HTTP"))
+        alive = alive or definite
 
     mini = {"devices": [fresh], "meta": {}, "windows": windows}
     ok, hits = check.detect(security.Ctx(model=mini, raw=raw, tested=None))
@@ -158,20 +170,31 @@ def run(check_id: str, finding: dict, model: dict, snapshot: Path, ctx: ScanCont
         return _out("present", hit["detail"])
     if not alive and not probes.ping(ip):
         return _out("unknown", "устройство не ответило — включено ли оно?")
+    if not definite:
+        return _out("unknown", "устройство на связи, но не ответило на проверку — попробуй позже или сделай срез")
     return _out("gone", GONE[check_id])
 
 
-def _forwards(check, finding: dict, model: dict, raw: Path, probes: Probes) -> dict:
+def _forwards(check, finding: dict, model: dict, raw: Path, probes: Probes, ctx: ScanContext) -> dict:
     """Пробросы: заново спросить роутер (модуль) и шлюз по UPnP. Устройство само может быть выключено."""
     from lanmap import routers
     from lanmap.collectors import igd
+    gateway = next((d for d in model.get("devices") or [] if d.get("is_gateway")), None)
+    want = ((gateway or {}).get("mac") or "").upper()
+    now = (probes.mac(ctx.gateway) or "").upper() if ctx.gateway else ""
+    if want and now and want != now:
+        return _out("unknown", "сейчас другой роутер, не тот, что в срезе")
+    router_error = None
     try:
-        router = routers.normalize(probes.router())
+        raw_router = probes.router()
+        # Хоть одно чтение роутера не удалось — список пробросов мог прийти неполным
+        if raw_router and raw_router.get("errors"):
+            router_error = "роутер ответил не на все запросы: " + ", ".join(sorted(raw_router["errors"]))
+            raw_router = None
+        router = routers.normalize(raw_router)
     except Exception as exc:
         router = None
         router_error = f"роутер: {exc.__class__.__name__}"
-    else:
-        router_error = None
     gw = None
     if check.id == "UPNP_PORT_MAPPINGS" and router is None:
         try:

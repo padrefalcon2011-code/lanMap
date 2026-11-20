@@ -177,14 +177,15 @@ def smb1_request() -> bytes:
     return struct.pack("!I", len(payload)) + payload
 
 
-def parse_smb1_reply(data: bytes) -> tuple[bool, str]:
-    """Ответ на smb1_request → (SMB1 принят?, пояснение). Пустой ответ — сервер оборвал соединение: SMB1 нет."""
+def parse_smb1_reply(data: bytes) -> tuple[bool | None, str]:
+    """Ответ на smb1_request → (SMB1 принят?, пояснение). Пустой ответ — сервер оборвал соединение: SMB1 нет.
+    Непонятный или обрезанный ответ — None: ни «есть», ни «нет»."""
     if not data:
         return False, "оборвал соединение в ответ на SMB1"
     if data[4:8] == b"\xfeSMB":
         return False, "ответил по SMB2"
     if data[4:8] != b"\xffSMB" or len(data) < 39:
-        return False, "непонятный ответ"
+        return None, "непонятный ответ"
     status = struct.unpack_from("<I", data, 9)[0]
     words = data[36]
     index = struct.unpack_from("<H", data, 37)[0]
@@ -206,7 +207,7 @@ def smb1_negotiate(ctx: ScanContext, ip: str) -> dict:
                 data = b""
         out["smb1"], out["smb1_detail"] = parse_smb1_reply(data)
     except ConnectionRefusedError:
-        out["smb1"], out["smb1_detail"] = False, "порт 445 закрыт"
+        out["smb1"], out["smb1_detail"], out["port_closed"] = False, "порт 445 закрыт", True
     except Exception as exc:
         out["smb1_detail"] = f"{type(exc).__name__}: {exc}"
     return out
