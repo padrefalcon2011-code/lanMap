@@ -318,6 +318,17 @@ def cmd_camera(args) -> int:
     return 0
 
 
+def cmd_launch(args) -> int:
+    from lanmap import launch, ops
+    try:
+        print(ops.launch(args.target, args.action, ack=args.ack)["message"])
+    except ops.OpError as exc:
+        url = getattr(exc, "url", None)
+        text = f"{launch.TELNET_WARNING}\nЕсли всё равно нужно: добавь --ack" if getattr(exc, "need_ack", False) else str(exc)
+        raise SystemExit(text + (f"\nАдрес потока: {url}" if url else ""))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _utf8_console()
     parser = argparse.ArgumentParser(prog="lanmap", description="Срез и опознание устройств локальной сети. Только чтение.")
@@ -390,6 +401,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("target", help="ключ, MAC или IP камеры из последнего среза")
     p.add_argument("--out", help="куда сохранить кадр (JPEG); без него кадр только проверяется")
     p.set_defaults(func=cmd_camera)
+
+    p = sub.add_parser("launch", help="открыть программу для устройства: SSH, общие папки, RDP, видео, Telnet, разбудить")
+    p.add_argument("target", help="ключ, MAC или IP устройства из последнего среза")
+    p.add_argument("action", choices=["ssh", "smb", "rdp", "vlc", "telnet", "wol"])
+    p.add_argument("--ack", action="store_true", help="для Telnet: понимаю, что пароль пойдёт открытым текстом")
+    p.set_defaults(func=cmd_launch)
 
     args = parser.parse_args(argv)
     if os.name != "nt":

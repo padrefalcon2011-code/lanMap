@@ -343,3 +343,61 @@ def camera_snapshot(target: str, **net) -> bytes:
 def camera_forget(target: str) -> bool:
     from lanmap import credentials
     return credentials.delete(camera_target(_camera_device(target)["key"]))
+
+
+# --- запуск программ из карточки (lanmap/launch.py) -------------------------------------------------
+
+def device(target: str) -> dict:
+    """Устройство последнего среза по ключу (MAC или MAC#серийник) или IP."""
+    _snap, model = latest()
+    devs = model.get("devices") or []
+    dev = (next((d for d in devs if d["key"] == target), None)
+           or next((d for d in devs if target in (d.get("ips") or [])), None))
+    if not dev:
+        raise OpError(f"В последнем срезе нет устройства «{target}»")
+    return dev
+
+
+def _stream_url(dev: dict, ip: str, port: int) -> tuple[str, str]:
+    """Адрес RTSP для VLC: путь потока спрашиваем у камеры по ONVIF (GetStreamUri) — только по адресу,
+    проверенному по ARP, и с паролем владельца, если он сохранён. Логин и пароль из ответа вырезаются.
+    Не вышло — адрес без пути."""
+    plain = f"rtsp://{ip}:{port}/"
+    facts = dev.get("facts") or {}
+    if not facts.get("onvif") and not facts.get("onvif_urls"):
+        return plain, "Путь потока зависит от модели камеры"
+    from lanmap import credentials
+    from lanmap.collectors import onvif
+    try:
+        ctx, verified, url = _camera_address(dev)
+        saved = credentials.load(camera_target(dev["key"]))
+        cam = onvif.Camera(ctx, verified, url, *(saved or ("", "")))
+        stream, had_creds = cam.stream_uri(auth=bool(saved))
+    except (OpError, onvif.OnvifError, OSError):
+        return plain, "Путь потока камера не назвала — возможно, VLC не покажет видео"
+    note = ("Камера ждёт логин и пароль прямо в адресе потока — LanMap их туда не вписывает (их видно в списке "
+            "процессов). Если видео нет, впиши их в VLC сам") if had_creds else "VLC спросит логин и пароль камеры, если нужно"
+    return stream, note
+
+
+def launch(target: str, action: str, ack: bool = False, **deps) -> dict:
+    """Запустить программу для устройства из белого списка. Возвращает {"message": …}; при ошибке — OpError,
+    у VLC без плеера — с полем url (адрес потока для копирования). deps — подмены для тестов:
+    ctx, tools, stream, popen, send."""
+    from lanmap import launch as lm
+    from lanmap.collectors import ScanContext
+    dev = device(target)
+    ctx = deps.get("ctx")
+    if ctx is None:
+        n = pick_network(allow_large=True)
+        ctx = ScanContext(local_ip=n.local_ip, network=n.network, gateway=n.gateway, if_index=n.if_index,
+                          local_mac=n.mac)
+    try:
+        plan = lm.plan(dev, action, ctx=ctx, tools=deps.get("tools") or lm.Tools.find(), ack=ack,
+                       stream=deps.get("stream", _stream_url))
+        return {"message": lm.execute(plan, deps.get("popen"), deps.get("send"))}
+    except lm.LaunchError as exc:
+        err = OpError(str(exc))
+        err.url = getattr(exc, "url", None)
+        err.need_ack = action == "telnet" and not ack
+        raise err from None

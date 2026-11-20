@@ -175,6 +175,11 @@ def _flags(dev: dict) -> str:
     return "".join(out)
 
 
+LAUNCH_ICONS = {"ssh": "computer", "smb": "folder", "rdp": "computer", "telnet": "alert", "vlc": "media",
+                "wol": "power"}
+LAUNCH_HINTS = {"rdp": "Открыть удалённый рабочий стол (mstsc)"}
+
+
 def _detail(dev: dict, found: list[dict] | None = None) -> str:
     ident, reg, r = dev["identity"], dev.get("registry") or {}, dev.get("router") or {}
     facts = [("IP", ", ".join(dev["ips"]) or "—"), ("MAC", dev["mac"] or "не получен")]
@@ -191,11 +196,18 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
     acts = []
     for a in dev["actions"]:
         danger = " danger" if "⚠" in a["label"] else ""
+        # с полем launch в веб-интерфейсе вместо ссылки или копирования — кнопка запуска программы
+        static = " static-only" if a.get("static_only") or a.get("launch") else ""
+        if a.get("launch"):
+            acts.append(f'<button class="act live-only{danger}" data-launch="{live({"key": dev["key"], "action": a["launch"]})}" '
+                        f'title="{e(a.get("hint", "") or LAUNCH_HINTS.get(a["launch"], ""))}">'
+                        f'{icon(LAUNCH_ICONS.get(a["launch"], "open"), "s")}<span class="lbl">{e(a["label"])}</span></button>')
+        if a["kind"] == "launch":
+            continue
         if a["kind"] == "link":
-            acts.append(f'<a class="act{danger}" href="{e(a["url"])}" target="_blank" rel="noopener" title="{e(a.get("hint", ""))}">'
+            acts.append(f'<a class="act{danger}{static}" href="{e(a["url"])}" target="_blank" rel="noopener" title="{e(a.get("hint", ""))}">'
                         f'{icon("open", "s")}<span class="lbl">{e(a["label"])}</span></a>')
         else:
-            static = " static-only" if a.get("static_only") else ""  # в веб-интерфейсе вместо неё кнопка
             acts.append(f'<button class="act{danger}{static}" data-copy="{e(a["value"])}" title="{e(a.get("hint", "") or a["value"])}">'
                         f'{icon("copy", "s")}<span class="lbl">{e(a["label"])}</span></button>')
     if dev.get("mac"):

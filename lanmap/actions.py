@@ -1,10 +1,29 @@
 """Действия с устройством: строятся из того, что реально найдено. Только запуск по клику, без паролей.
 
-На этапе статического HTML это ссылки и команды для копирования.
+В файле отчёта это ссылки и команды для копирования. У действия с полем launch в веб-интерфейсе есть
+кнопка запуска программы (lanmap/launch.py); kind "launch" — только кнопка, без замены в файле отчёта.
 """
 from __future__ import annotations
 
+from lanmap.util import is_private_mac
+
 WEB_HINT_PORTS = {80, 443, 5000, 5001, 8000, 8080, 8443, 8888, 9000, 10000}
+# Wake-on-LAN предлагаем тем, кто обычно его умеет: компьютерам и хранилищам
+WOL_TYPES = {"computer", "nas"}
+WOL_PORTS = {22, 139, 445, 3389, 5900}
+
+
+def _wol(dev: dict) -> list[dict]:
+    mac = dev.get("mac")
+    if not mac or is_private_mac(mac):
+        return []
+    dev_type = ((dev.get("identity") or {}).get("type"))
+    ports = {s["port"] for s in dev.get("services") or []}
+    if dev_type not in WOL_TYPES and not ports & WOL_PORTS:
+        return []
+    return [{"kind": "launch", "launch": "wol", "label": "Разбудить",
+             "hint": "Wake-on-LAN: волшебный пакет в локальную сеть. Сработает, если пробуждение по сети включено "
+                     "в BIOS или настройках устройства"}]
 
 
 def build(dev: dict) -> list[dict]:
@@ -12,7 +31,7 @@ def build(dev: dict) -> list[dict]:
     if not dev["ips"]:
         if dev.get("mac"):
             actions.append({"kind": "copy", "label": "MAC", "value": dev["mac"], "hint": ""})
-        return actions
+        return actions + _wol(dev)
     ip = dev["ips"][0]
     seen_urls = set()
     services = {s["port"]: s for s in dev["services"]}
@@ -35,17 +54,21 @@ def build(dev: dict) -> list[dict]:
     for port in (554, 8554, 10554):
         if port in services:
             actions.append({"kind": "link", "label": "Видео RTSP (VLC)", "url": f"rtsp://{ip}:{port}/",
-                            "hint": "Путь потока зависит от модели; часто нужен логин и пароль камеры"})
+                            "hint": "Путь потока зависит от модели; часто нужен логин и пароль камеры",
+                            "launch": "vlc", "port": port})
     if 445 in services or 139 in services:
         actions.append({"kind": "copy", "label": "Общие папки", "value": f"\\\\{ip}",
-                        "hint": "Вставь в адресную строку Проводника"})
+                        "hint": "Вставь в адресную строку Проводника", "launch": "smb"})
     if 22 in services:
-        actions.append({"kind": "copy", "label": "SSH", "value": f"ssh {ip}", "hint": "Команда для терминала"})
+        actions.append({"kind": "copy", "label": "SSH", "value": f"ssh {ip}", "hint": "Команда для терминала",
+                        "launch": "ssh"})
     if 23 in services:
         actions.append({"kind": "copy", "label": "Telnet ⚠", "value": f"telnet {ip}",
-                        "hint": "Незашифрованный канал: пароль идёт открытым текстом. Лучше выключить Telnet"})
+                        "hint": "Незашифрованный канал: пароль идёт открытым текстом. Лучше выключить Telnet",
+                        "launch": "telnet"})
     if 3389 in services:
-        actions.append({"kind": "copy", "label": "Удалённый рабочий стол", "value": f"mstsc /v:{ip}", "hint": ""})
+        actions.append({"kind": "copy", "label": "Удалённый рабочий стол", "value": f"mstsc /v:{ip}", "hint": "",
+                        "launch": "rdp"})
     if 5900 in services:
         actions.append({"kind": "copy", "label": "VNC", "value": f"{ip}:5900", "hint": "Адрес для VNC-клиента"})
     actions.append({"kind": "copy", "label": "IP", "value": ip, "hint": ""})
@@ -54,4 +77,4 @@ def build(dev: dict) -> list[dict]:
         actions.append({"kind": "copy", "label": "Команда «подписать»",
                         "value": f'python -m lanmap sign {dev["key"]} --name "…"',
                         "hint": "Подписать устройство в реестре", "static_only": True})
-    return actions
+    return actions + _wol(dev)

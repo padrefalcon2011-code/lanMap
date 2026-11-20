@@ -652,6 +652,23 @@ if(L){
    catch(e){if(e.need)login(/не сохранён/.test(e.message)?'':e.message);else f.innerHTML=msg(e.message,true);}}
   take();}));
 
+ // запуск программ из карточки (lanmap/launch.py): уходят только ключ устройства и имя действия, команду строит сервер
+ async function launchCall(body){let r;
+  try{r=await fetch('/api/launch',{method:'POST',headers:{'Content-Type':'application/json','X-LanMap-Token':L.token},
+   body:JSON.stringify(body)});}catch(e){throw new Error('Сервер LanMap не отвечает: окно serve закрыто?');}
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(j.error||('ошибка '+r.status)),{url:j.url,ack:!!j.need_ack});
+  return j;}
+ $$('[data-launch]').forEach(b=>b.addEventListener('click',async ev=>{ev.stopPropagation();
+  const d=JSON.parse(b.dataset.launch);b.classList.add('busy');
+  try{let j;
+   try{j=await launchCall(d);}
+   catch(e){if(!e.ack)throw e;  // Telnet: сначала предупреждение, запуск — только после согласия
+    if(!confirm(e.message+'\n\nВсё равно открыть Telnet?'))return;
+    j=await launchCall({...d,ack:true});}
+   toast(j.message);}
+  catch(e){if(e.url){try{await navigator.clipboard.writeText(e.url)}catch(_){}}toast(e.message);}
+  finally{b.classList.remove('busy');}}));
+
  // новый срез: запуск и ход
  const sb=$('#scan'),ss=$('#scanst');let scanning=false;
  async function poll(){let j;

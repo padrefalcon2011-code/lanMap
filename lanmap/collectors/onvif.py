@@ -1,6 +1,7 @@
-"""Стоп-кадр с камеры по ONVIF (GetSnapshotUri). Только чтение, только локальная подсеть.
+"""Стоп-кадр (GetSnapshotUri) и адрес видеопотока (GetStreamUri) с камеры по ONVIF. Только чтение,
+только локальная подсеть.
 
-Разрешены ровно четыре SOAP-действия (READ_ONLY_ACTIONS); любое другое модуль откажется отправлять.
+Разрешены ровно пять SOAP-действий (READ_ONLY_ACTIONS); любое другое модуль откажется отправлять.
 Пароль — только тот, что владелец сам сохранил в диспетчере учётных данных: заводские пароли и пустой
 пароль не пробуются никогда (это был бы подбор).
 
@@ -18,6 +19,7 @@ import base64
 import datetime as dt
 import hashlib
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,7 +32,8 @@ from lanmap.collectors import USER_AGENT, ScanContext
 DEVICE_NS = "http://www.onvif.org/ver10/device/wsdl"
 MEDIA_NS = "http://www.onvif.org/ver10/media/wsdl"
 READ_ONLY_ACTIONS = {"GetSystemDateAndTime": DEVICE_NS, "GetCapabilities": DEVICE_NS,
-                     "GetProfiles": MEDIA_NS, "GetSnapshotUri": MEDIA_NS}
+                     "GetProfiles": MEDIA_NS, "GetSnapshotUri": MEDIA_NS, "GetStreamUri": MEDIA_NS}
+SCHEMA_NS = "http://www.onvif.org/ver10/schema"
 WSSE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
 WSU = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
 DIGEST = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest"
@@ -117,6 +120,33 @@ def leaks_password(uri: str) -> bool:
     """Камера сама вписала непустой пароль в адрес кадра. Значение не читается и не сохраняется."""
     query = urllib.parse.parse_qsl(urllib.parse.urlsplit(uri).query, keep_blank_values=True)
     return any(k.lower() in PASSWORD_KEYS and v for k, v in query)
+
+
+# Значение логина или пароля в адресе потока: до следующего «ключ=», «?», «#» или конца. Xiongmai пишет их
+# прямо в пути и разделяет то «&», то «_»: …/user=admin&password=секрет&channel=1&stream=0.sdp
+_CRED_IN_URL = re.compile(r"(?i)(?<![a-z0-9])(" + "|".join(sorted(USER_KEYS | PASSWORD_KEYS, key=len, reverse=True))
+                          + r")=(.*?)(?=[&_;/][a-z0-9]+=|[?#]|$)")
+
+
+def rtsp_without_creds(uri: str, ip: str) -> tuple[str, bool] | None:
+    """Адрес видеопотока без логина и пароля, на проверенном IP. Камера может вписать их в userinfo, в путь
+    (Xiongmai) или в query — вырезаются отовсюду. (адрес, были ли там непустые логин или пароль)."""
+    try:
+        parts = urllib.parse.urlsplit(uri.strip())
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ("rtsp", "rtsps"):
+        return None
+    had = bool(parts.username or parts.password)
+
+    def blank(m: re.Match) -> str:
+        nonlocal had
+        had = had or bool(m.group(2))
+        return m.group(1) + "="
+    path, query = _CRED_IN_URL.sub(blank, parts.path), _CRED_IN_URL.sub(blank, parts.query)
+    netloc = ip if port is None else f"{ip}:{port}"
+    return urllib.parse.urlunsplit((parts.scheme.lower(), netloc, path or "/", query, "")), had
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -241,6 +271,22 @@ class Camera:
             # Xiongmai на неверный пароль в адресе кадра отвечает 200 и текстом, а не 401
             raise AuthError("камера не отдала кадр — проверь логин и пароль")
         return data
+
+
+    def stream_uri(self, auth: bool = True) -> tuple[str, bool]:
+        """Адрес RTSP-потока первого профиля без логина и пароля (см. rtsp_without_creds). Сам ответ камеры
+        наружу не выходит: в нём бывает её пароль."""
+        if auth:
+            self.sync_clock()
+        media = self.media_url(auth=auth)
+        token = self.profile(media, auth=auth)
+        setup = (f'<StreamSetup><Stream xmlns="{SCHEMA_NS}">RTP-Unicast</Stream>'
+                 f'<Transport xmlns="{SCHEMA_NS}"><Protocol>RTSP</Protocol></Transport></StreamSetup>')
+        root = self.call(media, "GetStreamUri", f"{setup}<ProfileToken>{escape(token)}</ProfileToken>", auth=auth)
+        clean = rtsp_without_creds(_text(root, "Uri"), self.ip)
+        if not clean:
+            raise OnvifError("камера не дала адрес видеопотока")
+        return clean
 
 
 def snapshot_leak(ctx: ScanContext, ip: str, device_url: str, poster: Poster | None = None) -> dict:

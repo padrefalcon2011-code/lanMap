@@ -384,6 +384,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True, "removed": removed})
         if route.startswith("/api/camera/"):
             return self._camera(route[len("/api/camera/"):], body)
+        if route == "/api/launch":
+            return self._launch(body)
         action = {"/api/sign": self._sign, "/api/finding": self._finding, "/api/check": self._check,
                   "/api/recheck": self._recheck}.get(route)
         if not action:
@@ -441,6 +443,22 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # текст ошибки не показываем: в нём мог оказаться адрес кадра
             return self._json(500, {"error": f"Ошибка LanMap при работе с камерой ({exc.__class__.__name__})"})
         return self._json(404, {"error": "не найдено"})
+
+    def _launch(self, body: dict) -> None:
+        """Запуск программы из карточки (lanmap/launch.py). Со страницы — только ключ устройства и имя действия;
+        адрес, порт и команду сервер берёт из последнего среза. Отчёт не пересобирается."""
+        from lanmap import launch
+        try:
+            key, action = self._str(body, "key"), self._str(body, "action")
+            if action not in launch.ACTIONS:
+                return self._json(400, {"error": "Неизвестное действие"})
+            result = ops.launch(key, action, ack=body.get("ack") is True)
+        except ops.OpError as exc:
+            return self._json(400, {"error": str(exc), "url": getattr(exc, "url", None),
+                                    "need_ack": bool(getattr(exc, "need_ack", False))})
+        except Exception as exc:  # текст ошибки не показываем: в нём мог оказаться адрес потока
+            return self._json(500, {"error": f"Ошибка LanMap при запуске ({exc.__class__.__name__})"})
+        return self._json(200, {"ok": True, **result})
 
     @staticmethod
     def _str(body: dict, name: str, required: bool = True) -> str | None:

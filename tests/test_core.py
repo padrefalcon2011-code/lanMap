@@ -875,6 +875,24 @@ class ServerTest(unittest.TestCase):
                               {"X-LanMap-Token": "test-token", "Content-Type": "text/plain"})
         self.assertEqual(code, 415)
 
+    def test_launch_route(self):
+        """Запуск: со страницы только ключ и действие; Telnet — сначала предупреждение; ничего не запускается."""
+        from types import SimpleNamespace
+        from unittest import mock
+        from lanmap import launch, ops
+        net = SimpleNamespace(local_ip="192.0.2.5", network=NET, gateway="192.0.2.1", if_index=1, mac=None)
+        with mock.patch.object(ops, "pick_network", return_value=net), \
+                mock.patch.object(launch, "_popen", side_effect=AssertionError("запуска быть не должно")):
+            code, out = self.api("/api/launch", {"key": MAC_B, "action": "telnet"})
+            self.assertEqual((code, out["need_ack"]), (400, True))
+            self.assertIn("открытым текстом", out["error"])
+            self.assertEqual(self.api("/api/launch", {"key": MAC_B, "action": "cmd /c calc"})[0], 400)
+            self.assertEqual(self.api("/api/launch", {"key": MAC_B, "action": "rdp"})[0], 400)  # 3389 не открыт
+            self.assertEqual(self.api("/api/launch", {"key": "192.0.2.99", "action": "telnet"})[0], 400)
+            self.assertEqual(self.api("/api/launch", {"key": MAC_B, "action": "telnet"}, token="")[0], 403)
+        page = (self.snap / "report.html").read_text("utf-8")
+        self.assertIn("data-launch=", page)
+
     def test_buttons_write_marks(self):
         from lanmap import checklist, registry, security
         code, out = self.api("/api/check", {"code": "E8", "status": "done", "note": "восстановил файл"})
