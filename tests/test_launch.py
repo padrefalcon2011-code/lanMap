@@ -15,7 +15,10 @@ if "LANMAP_DATA" not in os.environ:
 
 from lanmap import actions, launch, ops  # noqa: E402
 from lanmap.collectors import ScanContext, onvif  # noqa: E402
-from tests.test_camera import CAM_PW, FakeCamera, soap  # noqa: E402
+try:  # discover -s tests кладёт в sys.path саму папку tests; встроенный Python не видит пакет tests
+    from test_camera import CAM_PW, FakeCamera, soap  # noqa: E402
+except ImportError:
+    from tests.test_camera import CAM_PW, FakeCamera, soap  # noqa: E402
 
 CTX = ScanContext(local_ip="192.0.2.30", network="192.0.2.0/24", gateway="192.0.2.1", if_index=1)
 IP = "192.0.2.15"
