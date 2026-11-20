@@ -385,6 +385,7 @@ dialog.setupdlg::backdrop{background:rgba(0,0,0,.45)}
  border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:vertical}
 .shname{display:block;margin-top:8px;font-size:13px;cursor:pointer}.shname input{margin:0 6px 0 0;vertical-align:-2px}
 .shname .muted{font-size:12px}
+.aires ul{margin:4px 0 0;padding-left:20px;font-size:13px}.airule{white-space:pre-wrap;word-break:break-all;font:11px/1.4 ui-monospace,Consolas,monospace;background:var(--card,transparent);border:1px solid var(--line);border-radius:8px;padding:6px;margin:6px 0 0}
 .reads{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}.reads span{display:inline-flex;align-items:center;gap:3px;font-size:12px;
  padding:2px 8px;border-radius:999px;background:var(--chip)}.reads span.no{color:var(--crit)}
 .sbtn.busy svg{animation:spin 1s linear infinite}
@@ -536,6 +537,63 @@ function shareOpen(d,title){
  shdlg.showModal();}
 $$('[data-share]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const t=b.closest('.tile');
  const n=t&&$('.tmain b',t);shareOpen(JSON.parse(b.dataset.share),n?n.textContent:'');}));
+
+// «Разобрать с ИИ» (lanmap/aiparse.py): промт = общий шаблон страницы + улики из «Помочь опознать» той же плитки.
+// Никуда не отправляется: владелец копирует его в свой ИИ. В веб-интерфейсе ответ ИИ можно вставить обратно.
+function aiOpen(b){
+ const sico=n=>`<svg class="i s" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+ const sesc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ const t=b.closest('.tile'),sb=t&&$('[data-share]',t),n=t&&$('.tmain b',t);if(!sb)return;
+ const d=JSON.parse(sb.dataset.share),tpl=JSON.parse($('#aiprompt').textContent).prompt,key=b.dataset.ai,L=window.LANMAP;
+ if(!shdlg){shdlg=document.createElement('dialog');shdlg.className='setupdlg';document.body.appendChild(shdlg);
+  shdlg.addEventListener('click',e=>{if(e.target===shdlg)shdlg.close();});}
+ shdlg.innerHTML=`<div class="dh"><h2>${sico('bot')}Разобрать с ИИ</h2><button class="iconbtn" data-close title="Закрыть">${sico('x')}</button></div>
+ <div class="setup"><section class="sx"><div class="sxhead"><b>${sesc(n?n.textContent:'')}</b><span class="sxst">${sesc(d.lanmap)}</span></div>
+  <p><b>1. Скопируй промт в свой ИИ</b> — хватит обычного чата: ChatGPT, Claude, GigaChat, DeepSeek. Агенту с доступом
+   к компьютеру лучше не давать: в уликах строки, которые прислали устройства сети. IP, MAC, подписей и имён в тексте нет — проверь перед отправкой.</p>
+  ${d.names?`<label class="shname"><input type="checkbox" data-names> Добавить имя, которое устройство сообщает сети
+   <span class="muted">— часто это лучшая улика, но в нём бывает имя человека</span></label>`:''}
+  <textarea data-text></textarea>
+  <div class="lv"><button class="sbtn" data-shcopy>${sico('copy')}<span>Копировать промт</span></button></div>
+  ${L?`<p><b>2. Вставь ответ ИИ</b> — LanMap проверит его и покажет, что запишет. Без твоего «Принять» ничего не пишется.</p>
+  <textarea data-answer placeholder="ответ ИИ целиком, с блоком json"></textarea>
+  <div class="lv"><button class="sbtn" data-aicheck>${sico('check')}<span>Проверить ответ</span></button></div>
+  <div class="aires"></div>`:`<p class="muted">Ответ ИИ можно вставить обратно в веб-интерфейсе (python -m lanmap serve): тип и модель уйдут в реестр, правило — в базу опознания.</p>`}
+ </section></div>`;
+ const ta=$('[data-text]',shdlg),cb=$('[data-names]',shdlg);
+ // замена функцией: «$&» в уликах — не шаблон; «===» → «==», как aiparse.fence_safe: ограду улик не закрыть
+ const build=()=>{ta.value=tpl.replace('{evidence}',()=>(d.text+(cb&&cb.checked?'\n'+d.names:'')).replace(/={3,}/g,'=='));};
+ build();if(cb)cb.addEventListener('change',build);
+ $('[data-close]',shdlg).addEventListener('click',()=>shdlg.close());
+ $('[data-shcopy]',shdlg).addEventListener('click',async ev=>{const l=$('span',ev.currentTarget);
+  try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}
+  l.textContent='✓ скопировано — вставь в ИИ';setTimeout(()=>l.textContent='Копировать промт',2500);});
+ if(L){
+  const ans=$('[data-answer]',shdlg),res=$('.aires',shdlg),chk=$('[data-aicheck]',shdlg);
+  const post=async(path,body)=>{let r;
+   try{r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-LanMap-Token':L.token},body:JSON.stringify(body)});}
+   catch(e){throw new Error('Сервер LanMap не отвечает: окно serve закрыто?');}
+   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('ошибка '+r.status));return j;};
+  chk.addEventListener('click',async()=>{chk.classList.add('busy');
+   try{const j=await post('/api/ai/check',{key,answer:ans.value});
+    const what=[j.vendor,j.model].filter(Boolean).join(' ');
+    const rule=j.rule?`<p><b>Правило</b> (${sesc(j.rule.why)}): ${j.rule_others.length
+      ?`<span class="err">подходит ещё к ${j.rule_others.length}: ${sesc(j.rule_others.slice(0,8).join(', '))}${j.rule_others.length>8?'…':''}</span> — проверь, что это такие же устройства`
+      :'подходит только к этому устройству'}.</p><pre class="airule">${sesc(JSON.stringify(j.rule.if_any?{if:j.rule.if,if_any:j.rule.if_any,if_not:j.rule.if_not,then:j.rule.then}:{if:j.rule.if,if_not:j.rule.if_not,then:j.rule.then}))}</pre>`
+     :j.rule_error?`<p class="err">Правило не годится: ${sesc(j.rule_error)}</p>`:'';
+    res.innerHTML=`<p><b>${sesc(j.type_label||'тип не назван')}</b>${what?' · '+sesc(what):''} · уверенность ИИ: ${sesc(j.confidence_label)}</p>
+     <p>${sesc(j.explanation)}</p>${j.checks.length?'<p><b>Что ещё проверить:</b></p><ul>'+j.checks.map(c=>`<li>${sesc(c)}</li>`).join('')+'</ul>':''}${rule}
+     <label class="shname"><input type="checkbox" data-reg checked> Записать тип и модель в реестр — как подпись владельца</label>
+     ${j.rule?'<label class="shname"><input type="checkbox" data-rule checked> Сохранить правило — дальше LanMap узнает такие устройства сам</label>':''}
+     <div class="lv"><button class="sbtn save" data-apply>${sico('check')}<span>Принять</span></button></div>`;
+    $('[data-apply]',res).addEventListener('click',async ev=>{const btn=ev.currentTarget;btn.classList.add('busy');
+     try{await post('/api/ai/apply',{key,answer:ans.value,registry:$('[data-reg]',res).checked,rule:!!($('[data-rule]',res)||{}).checked});
+      try{sessionStorage.setItem('lanmap.back',JSON.stringify({y:scrollY,id:b.dataset.id}))}catch(e){}location.reload();}
+     catch(e){btn.classList.remove('busy');res.insertAdjacentHTML('beforeend',`<p class="err">${sesc(e.message)}</p>`);}});}
+   catch(e){res.innerHTML=`<p class="err">${sesc(e.message)}</p>`;}
+   finally{chk.classList.remove('busy');}});}
+ shdlg.showModal();}
+$$('[data-ai]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();aiOpen(b);}));
 
 // «Спросить ИИ»: обезличенный текст всего отчёта (lanmap/askai.py), только копирование — никуда не отправляется
 const askBtn=$('#askai');

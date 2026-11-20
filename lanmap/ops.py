@@ -401,3 +401,44 @@ def launch(target: str, action: str, ack: bool = False, **deps) -> dict:
         err.url = getattr(exc, "url", None)
         err.need_ack = action == "telnet" and not ack
         raise err from None
+
+
+# --- «Разобрать с ИИ»: промт для ИИ владельца и приём ответа (lanmap/aiparse.py) --------------------
+
+def ai_prompt(target: str, with_names: bool = False) -> str:
+    from lanmap import aiparse
+    return aiparse.prompt(device(target), with_names)
+
+
+def ai_check(target: str, answer: str) -> dict:
+    """Проверить ответ ИИ и показать, что будет записано. Ничего не пишет."""
+    from lanmap import aiparse
+    dev = device(target)
+    try:
+        return aiparse.review(aiparse.parse(answer), dev, latest()[1].get("devices") or [])
+    except aiparse.AIError as exc:
+        raise OpError(str(exc)) from None
+
+
+def ai_apply(target: str, answer: str, to_registry: bool = True, save_rule: bool = True) -> dict:
+    """Подтверждение владельца: тип, производитель и модель — в реестр; правило — в data/fingerprints/ai.json.
+    Ответ проверяется заново: тому, что разобрала страница, не доверяем. Ключ устройства — от владельца,
+    не из ответа. Отчёт пересобирает вызывающий (ops.rebuild)."""
+    from lanmap import aiparse, identify
+    from lanmap.util import data_dir, write_json
+    out = ai_check(target, answer)
+    dev = device(target)
+    done: dict = {"key": dev["key"], "registry": None, "rule": None}
+    if to_registry:
+        fields = aiparse.registry_fields(out)
+        if fields:
+            done["registry"] = sign(dev["key"], fields)[1]
+    if save_rule and out.get("rule"):
+        path = data_dir() / "fingerprints" / "ai.json"
+        doc, rid = aiparse.add_rule(read_json(path, {}) or {}, out["rule"])
+        write_json(path, doc)
+        identify.load_rules.cache_clear()  # иначе сервер не увидит нового правила до перезапуска
+        done["rule"] = rid
+    if not done["registry"] and not done["rule"]:
+        raise OpError("Нечего записывать: отметь реестр или правило")
+    return done

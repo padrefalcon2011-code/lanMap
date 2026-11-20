@@ -893,6 +893,22 @@ class ServerTest(unittest.TestCase):
         page = (self.snap / "report.html").read_text("utf-8")
         self.assertIn("data-launch=", page)
 
+    def test_ai_routes(self):
+        """«Разобрать с ИИ»: мусор — 400, во время среза запись не идёт (409); в отчёте кнопка и шаблон промта."""
+        code, out = self.api("/api/ai/check", {"key": MAC_B, "answer": "просто текст"})
+        self.assertEqual(code, 400)
+        self.assertIn("JSON", out["error"])
+        self.assertEqual(self.api("/api/ai/check", {"key": MAC_B})[0], 400)
+        state = self.httpd.state
+        state.scan["running"] = True
+        try:
+            self.assertEqual(self.api("/api/ai/apply", {"key": MAC_B, "answer": "{}", "registry": True})[0], 409)
+        finally:
+            state.scan["running"] = False
+        page = (self.snap / "report.html").read_text("utf-8")
+        self.assertIn('id="aiprompt"', page)
+        self.assertIn("data-ai=", page)
+
     def test_buttons_write_marks(self):
         from lanmap import checklist, registry, security
         code, out = self.api("/api/check", {"code": "E8", "status": "done", "note": "восстановил файл"})

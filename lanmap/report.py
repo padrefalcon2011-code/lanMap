@@ -11,6 +11,7 @@ import ipaddress
 import json
 from collections import Counter
 
+from lanmap import aiparse as aiparse_mod
 from lanmap import askai as askai_mod
 from lanmap import forwards as fw_mod
 from lanmap import security as sec_mod
@@ -60,6 +61,11 @@ def icon(name: str, cls: str = "", label: str | None = None) -> str:
 def live(data: dict) -> str:
     """JSON для кнопки в атрибуте data-…: веб-интерфейса (data-sign и др.) или «Помочь опознать» (data-share)."""
     return e(json.dumps(data, ensure_ascii=False))
+
+
+def _script_json(data: dict) -> str:
+    """JSON внутри <script>: без «</», иначе браузер закроет тег раньше времени."""
+    return json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
 
 
 def tip(text: str) -> str:
@@ -222,6 +228,9 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
     acts.append(f'<button class="act" data-share="{live(share_mod.payload(dev))}" title="Обезличенный рассказ об устройстве '
                 f'для заявки на GitHub: так LanMap научится его узнавать">{icon("question", "s")}'
                 f'<span class="lbl">Помочь опознать</span></button>')
+    acts.append(f'<button class="act" data-ai="{e(dev["key"])}" data-id="a|{e(dev["key"])}" title="Промт для твоего ИИ: что это за устройство. '
+                f'Ответ ИИ можно вставить обратно — в реестр и в правило опознания">{icon("bot", "s")}'
+                f'<span class="lbl">Разобрать с ИИ</span></button>')
 
     chosen = "".join(
         f'<li><b>{FIELD_NAMES.get(k, k)}:</b> {e(v["value"] if k != "type" else ident["type_label"])} '
@@ -872,6 +881,7 @@ def render(model: dict) -> str:
 {_legend()}
 <footer>LanMap {e(meta.get('lanmap_version', ''))} · только чтение сети · отчёт содержит личные данные, не публикуй его</footer>
 </div>
+<script type="application/json" id="aiprompt">{_script_json({"prompt": aiparse_mod.PROMPT})}</script>
 <script>{SETUP_JS}{JS}</script>
 </body></html>"""
 

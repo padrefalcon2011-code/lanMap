@@ -386,8 +386,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._camera(route[len("/api/camera/"):], body)
         if route == "/api/launch":
             return self._launch(body)
+        if route == "/api/ai/check":
+            return self._ai_check(body)
         action = {"/api/sign": self._sign, "/api/finding": self._finding, "/api/check": self._check,
-                  "/api/recheck": self._recheck}.get(route)
+                  "/api/recheck": self._recheck, "/api/ai/apply": self._ai_apply}.get(route)
         if not action:
             return self._json(404, {"error": "не найдено"})
         if self.state.scan_status()["running"]:
@@ -459,6 +461,27 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # текст ошибки не показываем: в нём мог оказаться адрес потока
             return self._json(500, {"error": f"Ошибка LanMap при запуске ({exc.__class__.__name__})"})
         return self._json(200, {"ok": True, **result})
+
+    def _ai_check(self, body: dict) -> None:
+        """«Разобрать с ИИ»: проверить вставленный ответ ИИ и показать, что будет записано. Ничего не пишет."""
+        try:
+            answer = body.get("answer")
+            if not isinstance(answer, str):
+                raise ops.OpError("Нет ответа ИИ")
+            return self._json(200, {"ok": True, **ops.ai_check(self._str(body, "key"), answer)})
+        except ops.OpError as exc:
+            return self._json(400, {"error": str(exc)})
+        except Exception as exc:
+            return self._json(500, {"error": f"Ошибка LanMap ({exc.__class__.__name__})"})
+
+    def _ai_apply(self, body: dict) -> dict:
+        """Подтверждение владельца: ответ проверяется заново, ключ — со страницы, не из ответа."""
+        answer = body.get("answer")
+        if not isinstance(answer, str):
+            raise ops.OpError("Нет ответа ИИ")
+        done = ops.ai_apply(self._str(body, "key"), answer, to_registry=body.get("registry") is True,
+                            save_rule=body.get("rule") is True)
+        return {"key": done["key"], "rule": done["rule"], "registry": bool(done["registry"])}
 
     @staticmethod
     def _str(body: dict, name: str, required: bool = True) -> str | None:

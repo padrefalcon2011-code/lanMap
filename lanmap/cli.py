@@ -329,6 +329,33 @@ def cmd_launch(args) -> int:
     return 0
 
 
+def cmd_ai(args) -> int:
+    from lanmap import ops
+    try:
+        if args.action == "prompt":
+            print(ops.ai_prompt(args.target, args.names))
+            return 0
+        answer = Path(args.answer).read_text("utf-8") if args.answer else sys.stdin.read()
+        if args.action == "check":
+            r = ops.ai_check(args.target, answer)
+            print(f"{r['type_label'] or '—'}: {r['vendor'] or '—'} {r['model'] or ''} ({r['confidence_label']})")
+            print(r["explanation"])
+            for c in r["checks"]:
+                print(f"  • {c}")
+            if r["rule"]:
+                others = ", ".join(r["rule_others"]) or "больше ни к одному"
+                print(f"Правило подходит к этому устройству и ещё: {others}")
+            elif r["rule_error"]:
+                print(f"Правило не годится: {r['rule_error']}")
+            return 0
+        done = ops.ai_apply(args.target, answer, to_registry=not args.no_registry, save_rule=not args.no_rule)
+        ops.rebuild()
+        print("Записано:" + (" реестр" if done["registry"] else "") + (f" правило {done['rule']}" if done["rule"] else ""))
+    except ops.OpError as exc:
+        raise SystemExit(str(exc))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _utf8_console()
     parser = argparse.ArgumentParser(prog="lanmap", description="Срез и опознание устройств локальной сети. Только чтение.")
@@ -407,6 +434,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("action", choices=["ssh", "smb", "rdp", "vlc", "telnet", "wol"])
     p.add_argument("--ack", action="store_true", help="для Telnet: понимаю, что пароль пойдёт открытым текстом")
     p.set_defaults(func=cmd_launch)
+
+    p = sub.add_parser("ai", help="«Разобрать с ИИ»: промт для твоего ИИ и приём его ответа (в реестр и правила)")
+    p.add_argument("action", choices=["prompt", "check", "apply"])
+    p.add_argument("target", help="ключ, MAC или IP устройства из последнего среза")
+    p.add_argument("--names", action="store_true", help="добавить в промт имя, которое устройство сообщает сети")
+    p.add_argument("--answer", help="файл с ответом ИИ (без него — читается из стандартного ввода)")
+    p.add_argument("--no-registry", action="store_true", help="не записывать тип и модель в реестр")
+    p.add_argument("--no-rule", action="store_true", help="не сохранять правило")
+    p.set_defaults(func=cmd_ai)
 
     args = parser.parse_args(argv)
     if os.name != "nt":
