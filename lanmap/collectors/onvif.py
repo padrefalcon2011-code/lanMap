@@ -49,7 +49,11 @@ class OnvifError(Exception):
     """Понятная ошибка. Текст никогда не содержит пароль и адрес кадра."""
 
 
-class AuthError(OnvifError):
+class Refused(OnvifError):
+    """Камера ответила, но отказала (SOAP-ошибка или HTTP-код). Не путать с молчанием."""
+
+
+class AuthError(Refused):
     pass
 
 
@@ -176,7 +180,7 @@ class Camera:
         if status == 401 or (fault is not None and any(w in "".join(fault.itertext()) for w in AUTH_FAULTS)):
             raise AuthError("камера не приняла логин или пароль")
         if fault is not None or status != 200 or root is None:
-            raise OnvifError(f"камера отказала в {action} (HTTP {status})")
+            raise Refused(f"камера отказала в {action} (HTTP {status})")
         return root
 
     def sync_clock(self) -> None:
@@ -194,10 +198,10 @@ class Camera:
         except (OnvifError, ValueError, TypeError, AttributeError):
             pass
 
-    def media_url(self) -> str:
+    def media_url(self, auth: bool = True) -> str:
         """Адрес медиа-службы из GetCapabilities, на проверенном IP. Нет ответа — служба устройства."""
         try:
-            root = self.call(self.device_url, "GetCapabilities", "<Category>Media</Category>")
+            root = self.call(self.device_url, "GetCapabilities", "<Category>Media</Category>", auth=auth)
         except AuthError:
             raise
         except OnvifError:
@@ -206,8 +210,8 @@ class Camera:
         xaddr = _text(media, "XAddr") if media is not None else ""
         return _same_host(xaddr, self.ip) or self.device_url
 
-    def profile(self, media: str) -> str:
-        root = self.call(media, "GetProfiles")
+    def profile(self, media: str, auth: bool = True) -> str:
+        root = self.call(media, "GetProfiles", auth=auth)
         for el in root.iter():
             if _local(el.tag) == "Profiles" and el.get("token"):
                 return el.get("token")
@@ -237,3 +241,26 @@ class Camera:
             # Xiongmai на неверный пароль в адресе кадра отвечает 200 и текстом, а не 401
             raise AuthError("камера не отдала кадр — проверь логин и пароль")
         return data
+
+
+def snapshot_leak(ctx: ScanContext, ip: str, device_url: str, poster: Poster | None = None) -> dict:
+    """Без пароля спросить адрес кадра и узнать одно: вписала ли камера в него непустой пароль.
+    leak: True — вписала; False — адрес без пароля не дала или пароля в нём нет; None — не ответила.
+    Ни адрес, ни логин, ни пароль не сохраняются и не читаются дальше этой функции."""
+    out: dict = {"ip": ip, "url": device_url, "leak": None}
+    try:
+        cam = Camera(ctx, ip, device_url, "", "", poster)
+        media = cam.media_url(auth=False)
+        token = cam.profile(media, auth=False)
+        root = cam.call(media, "GetSnapshotUri", f"<ProfileToken>{escape(token)}</ProfileToken>", auth=False)
+    except Refused:
+        out.update(leak=False, detail="без пароля адрес кадра не даёт")
+        return out
+    except OnvifError as exc:
+        out["detail"] = str(exc)
+        return out
+    uri = _text(root, "Uri")
+    out["leak"] = leaks_password(uri)
+    out["detail"] = ("без пароля выдаёт адрес кадра, а в нём — логин и пароль" if out["leak"]
+                     else "адрес кадра без пароля выдаёт, но пароля в нём нет" if uri else "адрес кадра не дала")
+    return out

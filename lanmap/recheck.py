@@ -21,7 +21,7 @@ PORTS = {"TELNET_OPEN": [23], "CAMERA_XM_PORT": [34567], "ADB_EXPOSED": [5555],
          "NAS_EXTRA_SERVICES": sorted(security.NAS_EXTRA_PORTS)}
 SMB_CHECKS = {"SMB_SIGNING", "SMB1_ENABLED"}
 FORWARD_CHECKS = {"UPNP_PORT_MAPPINGS", "STATIC_PORT_FORWARD"}
-SUPPORTED = set(PORTS) | SMB_CHECKS | FORWARD_CHECKS | {"CAMERA_ONVIF_ANON"}
+SUPPORTED = set(PORTS) | SMB_CHECKS | FORWARD_CHECKS | {"CAMERA_ONVIF_ANON", "CAMERA_PASSWORD_LEAK"}
 
 GONE = {
     "TELNET_OPEN": "порт 23 закрыт",
@@ -31,6 +31,7 @@ GONE = {
     "SMB_SIGNING": "подпись SMB обязательна (или SMB выключен)",
     "SMB1_ENABLED": "SMB1 больше не принимается",
     "CAMERA_ONVIF_ANON": "ONVIF просит пароль или не отвечает",
+    "CAMERA_PASSWORD_LEAK": "без пароля камера больше не выдаёт адрес кадра с паролем",
     "UPNP_PORT_MAPPINGS": "у роутера нет UPnP-пробросов к устройству",
     "STATIC_PORT_FORWARD": "у роутера нет пробросов к устройству",
 }
@@ -70,6 +71,10 @@ class Probes:
     def onvif(self, url: str) -> dict:
         from lanmap.collectors import protocols
         return protocols.onvif_info(self.ctx, url)
+
+    def onvif_leak(self, ip: str, url: str) -> dict:
+        from lanmap.collectors import onvif
+        return onvif.snapshot_leak(self.ctx, ip, url)
 
     def windows(self) -> dict:
         from lanmap.collectors import windows
@@ -159,6 +164,12 @@ def run(check_id: str, finding: dict, model: dict, snapshot: Path, ctx: ScanCont
         else:
             facts["onvif"] = {"auth_required": True} if o.get("auth_required") else {}
         definite = bool(o.get("anonymous") or o.get("auth_required") or str(o.get("error") or "").startswith("HTTP"))
+        alive = alive or definite
+    elif check_id == "CAMERA_PASSWORD_LEAK":
+        known = next((o.get("url") for o in read_json(raw / "onvif.json", []) or [] if o.get("ip") == ip), None)
+        o = probes.onvif_leak(ip, known or f"http://{ip}/onvif/device_service")
+        facts["onvif_leak"] = o.get("leak")
+        definite = o.get("leak") is not None
         alive = alive or definite
 
     mini = {"devices": [fresh], "meta": {}, "windows": windows}

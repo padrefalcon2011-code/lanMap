@@ -12,6 +12,7 @@ from pathlib import Path
 from lanmap import __version__, netinfo
 from lanmap.collectors import ScanContext, discovery, igd, protocols, tcp, windows
 from lanmap.collectors import dnswire
+from lanmap.collectors import onvif as onvif_mod
 from lanmap.ports import QUICK
 from lanmap.util import data_dir, now_iso, write_json
 
@@ -153,11 +154,15 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
         f_onvif = pool.map(lambda url: protocols.onvif_info(ctx, url), protocols.onvif_targets(ctx, wsd, open_ports))
         upnp = protocols.upnp_descriptions(ctx, multi.get("ssdp", []))
         smb, onvif = list(f_smb), list(f_onvif)
+        # Отдаёт ли камера без пароля адрес кадра со своим паролем (сам адрес не сохраняется)
+        answered = [o for o in onvif if o.get("fields") or o.get("auth_required")]
+        snap_leak = list(pool.map(lambda o: onvif_mod.snapshot_leak(ctx, o["ip"], o["url"]), answered))
     write_json(raw / "names.json", names)
     write_json(raw / "upnp.json", upnp)
     progress.step("UPnP-пробросы у шлюза (без пароля, только чтение)")
     write_json(raw / "upnp_igd.json", igd.collect(ctx, upnp))
     write_json(raw / "onvif.json", onvif)
+    write_json(raw / "onvif_snapshot.json", snap_leak)
     write_json(raw / "smb.json", smb)
     write_json(raw / "windows.json", windows.collect())
 

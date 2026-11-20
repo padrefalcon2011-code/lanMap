@@ -63,7 +63,7 @@ class _Dev:
         self.ips: list[str] = []
         self.facts: dict = {
             "ports": set(), "mdns_services": set(), "mdns_txt": {}, "mdns_hosts": set(), "mdns_instances": set(),
-            "upnp": {}, "onvif": {}, "onvif_urls": {}, "http": [], "tls": [], "ssh": [], "rtsp": [], "banners": [],
+            "upnp": {}, "onvif": {}, "onvif_urls": {}, "onvif_leak": None, "http": [], "tls": [], "ssh": [], "rtsp": [], "banners": [],
             "ssdp_server": set(), "ssdp_st": set(), "wsd_types": set(), "netbios": None, "dns": set(),
             "router_names": set(), "smb": None, "smb1": None, "ttl": None, "alive": False, "arp": False, "duplicate_mac": False,
             "router": None, "router_only": False,
@@ -98,6 +98,7 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
     names = read_json(raw / "names.json", {})
     upnp = read_json(raw / "upnp.json", [])
     onvif = read_json(raw / "onvif.json", [])
+    onvif_snap = read_json(raw / "onvif_snapshot.json", [])
     smb = read_json(raw / "smb.json", [])
 
     # 1. IP → MAC: ARP-ответ надёжнее кэша соседей
@@ -303,6 +304,14 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
         elif o.get("auth_required"):
             dev.facts["onvif"] = {"auth_required": True}
             dev.add("onvif", "ONVIF отвечает, но просит пароль", o["ip"])
+
+    # Отдаёт ли камера без пароля адрес кадра со своим паролем: True, если хоть по одному адресу
+    for o in onvif_snap or []:
+        dev = by_ip.get(o.get("ip"))
+        if dev and o.get("leak") is not None and dev.facts["onvif_leak"] is not True:
+            dev.facts["onvif_leak"] = bool(o["leak"])
+            if o["leak"]:
+                dev.add("onvif", "ONVIF без пароля выдаёт адрес кадра с логином и паролем", o["ip"])
 
     # 7. Имена
     for ip, name in (names.get("reverse_dns") or {}).items():

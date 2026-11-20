@@ -211,3 +211,75 @@ class CameraOpsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PasswordLeakTest(unittest.TestCase):
+    """CAMERA_PASSWORD_LEAK: камера без пароля отдаёт адрес кадра со своим паролем. Сохраняется только да/нет."""
+
+    def test_collector(self):
+        fake = FakeCamera()
+        res = onvif.snapshot_leak(CTX, IP, f"http://{IP}:8899/onvif/device_service", fake.poster)
+        self.assertIs(res["leak"], True)
+        self.assertNotIn(CAM_PW, repr(res))
+        self.assertNotIn("webcapture", repr(res))
+        self.assertTrue(all(b"UsernameToken" not in body for _, _, body in fake.posts))  # без пароля
+        self.assertEqual(fake.fetched, [])                                                # кадр не берётся
+        clean = FakeCamera(uri=f"http://{IP}/snap.jpg?channel=0&user=&password=")
+        self.assertIs(onvif.snapshot_leak(CTX, IP, f"http://{IP}/onvif/device_service", clean.poster)["leak"], False)
+        refused = FakeCamera(auth_fault=True)
+        self.assertIs(onvif.snapshot_leak(CTX, IP, f"http://{IP}/onvif/device_service", refused.poster)["leak"], False)
+
+        def silent(url, body, headers):
+            raise TimeoutError("timed out")
+        self.assertIsNone(onvif.snapshot_leak(CTX, IP, f"http://{IP}/onvif/device_service", silent)["leak"])
+
+    def snapshot(self, leak):
+        from pathlib import Path
+        from lanmap.util import write_json
+        snap = Path(tempfile.mkdtemp(dir=os.environ["LANMAP_DATA"]))
+        raw = snap / "raw"
+        write_json(snap / "meta.json", {"interface": {"local_ip": "192.0.2.30", "gateway": "192.0.2.1", "network": "192.0.2.0/24"}})
+        write_json(raw / "neighbors.json", [{"ip": "192.0.2.10", "mac": MAC}, {"ip": IP, "mac": MAC}])
+        write_json(raw / "ping.json", {"192.0.2.10": {"alive": True}, IP: {"alive": True}})
+        write_json(raw / "ports.json", {"open": {IP: [554, 8899]}})
+        url = f"http://{IP}:8899/onvif/device_service"
+        write_json(raw / "onvif.json", [{"ip": IP, "url": url, "fields": {"Model": "M1"}}])
+        if leak is not ...:
+            write_json(raw / "onvif_snapshot.json", [{"ip": "192.0.2.10", "url": url, "leak": None},
+                                                     {"ip": IP, "url": url, "leak": leak}])
+        return snap
+
+    def evaluate(self, snap):
+        from lanmap import devices, security
+        devs = devices.build(snap)
+        for d in devs:
+            d.setdefault("identity", {"type": "camera"})
+        ok, hits = security.BY_ID["CAMERA_PASSWORD_LEAK"].detect(
+            security.Ctx(model={"devices": devs}, raw=snap / "raw", tested=None))
+        return devs, ok, hits
+
+    def test_check(self):
+        devs, ok, hits = self.evaluate(self.snapshot(True))
+        self.assertTrue(ok)
+        self.assertEqual([h["key"] for h in hits], [MAC])
+        self.assertIs(next(d for d in devs if d["key"] == MAC)["facts"]["onvif_leak"], True)
+        _, ok, hits = self.evaluate(self.snapshot(False))
+        self.assertEqual((ok, hits), (True, []))
+        _, ok, _ = self.evaluate(self.snapshot(...))  # срез без опроса — «нечем проверить»
+        self.assertFalse(ok)
+
+    def test_recheck(self):
+        from lanmap import devices, recheck
+        snap = self.snapshot(True)
+        devs = devices.build(snap)
+        dev = next(d for d in devs if d["key"] == MAC)
+        model = {"devices": devs, "meta": {"interface": {"network": "192.0.2.0/24"}}}
+        finding = {"key": MAC, "ips": dev["ips"]}
+
+        def probes(leak):
+            return SimpleNamespace(mac=lambda ip: {"192.0.2.10": OTHER, IP: MAC}.get(ip), ping=lambda ip: False,
+                                   onvif_leak=lambda ip, url: {"ip": ip, "leak": leak})
+        run = lambda leak: recheck.run("CAMERA_PASSWORD_LEAK", finding, model, snap, CTX, probes(leak))["result"]
+        self.assertEqual(run(True), "present")
+        self.assertEqual(run(False), "gone")
+        self.assertEqual(run(None), "unknown")  # не ответила — не «исправлено»
