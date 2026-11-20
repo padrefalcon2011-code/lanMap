@@ -122,31 +122,36 @@ def leaks_password(uri: str) -> bool:
     return any(k.lower() in PASSWORD_KEYS and v for k, v in query)
 
 
-# Значение логина или пароля в адресе потока: до следующего «ключ=», «?», «#» или конца. Xiongmai пишет их
-# прямо в пути и разделяет то «&», то «_»: …/user=admin&password=секрет&channel=1&stream=0.sdp
+# Значение логина или пароля в адресе потока: до следующего «ключ=» или конца. Xiongmai пишет их прямо в
+# пути и разделяет то «&», то «_»: …/user=admin&password=секрет&channel=1&stream=0.sdp. Ищем по всему, что
+# после хоста, одной строкой: «?» и «#» внутри пароля не должны оставить его хвост в query или фрагменте.
 _CRED_IN_URL = re.compile(r"(?i)(?<![a-z0-9])(" + "|".join(sorted(USER_KEYS | PASSWORD_KEYS, key=len, reverse=True))
-                          + r")=(.*?)(?=[&_;/][a-z0-9]+=|[?#]|$)")
+                          + r")=(.*?)(?=[&_;/?#][a-z0-9]+=|$)")
+_RTSP = re.compile(r"(?i)^(rtsps?)://([^/?#]*)(.*)$", re.S)
 
 
 def rtsp_without_creds(uri: str, ip: str) -> tuple[str, bool] | None:
     """Адрес видеопотока без логина и пароля, на проверенном IP. Камера может вписать их в userinfo, в путь
     (Xiongmai) или в query — вырезаются отовсюду. (адрес, были ли там непустые логин или пароль)."""
+    m = _RTSP.match(uri.strip())
+    if not m:
+        return None
+    scheme, authority, rest = m.group(1).lower(), m.group(2), m.group(3)
+    userinfo, at, hostport = authority.rpartition("@")
     try:
-        parts = urllib.parse.urlsplit(uri.strip())
-        port = parts.port
+        port = urllib.parse.urlsplit(f"//{hostport}").port
     except ValueError:
         return None
-    if parts.scheme.lower() not in ("rtsp", "rtsps"):
-        return None
-    had = bool(parts.username or parts.password)
+    had = bool(at and userinfo.strip(":"))
 
-    def blank(m: re.Match) -> str:
+    def blank(found: re.Match) -> str:
         nonlocal had
-        had = had or bool(m.group(2))
-        return m.group(1) + "="
-    path, query = _CRED_IN_URL.sub(blank, parts.path), _CRED_IN_URL.sub(blank, parts.query)
-    netloc = ip if port is None else f"{ip}:{port}"
-    return urllib.parse.urlunsplit((parts.scheme.lower(), netloc, path or "/", query, "")), had
+        had = had or bool(found.group(2))
+        return found.group(1) + "="
+    rest = _CRED_IN_URL.sub(blank, rest).partition("#")[0]
+    if not rest.startswith("/"):
+        rest = "/" + rest
+    return f"{scheme}://{ip if port is None else f'{ip}:{port}'}{rest}", had
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

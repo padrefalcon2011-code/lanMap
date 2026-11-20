@@ -153,6 +153,12 @@ class StreamUriTest(unittest.TestCase):
             self.assertTrue(had)
             self.assertNotIn("s3cr3t", got)
             self.assertNotIn("ab_cd", got)
+        for pw, tail in (("ab?cd", "cd"), ("ab#cd", "cd"), ("a&b", "&b&")):
+            got, had = onvif.rtsp_without_creds(
+                f"rtsp://198.51.100.7:554/user=admin&password={pw}&channel=1&stream=0.sdp?real_stream", IP)
+            self.assertTrue(had)
+            self.assertNotIn(tail, got, pw)
+            self.assertTrue(got.startswith(f"rtsp://{IP}:554/user=&password="), got)
         self.assertEqual(onvif.rtsp_without_creds("rtsp://198.51.100.7/live/ch0", IP), (f"rtsp://{IP}/live/ch0", False))
         self.assertEqual(onvif.rtsp_without_creds(f"rtsp://h/user=&password=&channel=1", IP)[1], False)
         for bad in ("http://198.51.100.7/x", "file:///c:/x", "rtsp://h:99999/x", ""):
