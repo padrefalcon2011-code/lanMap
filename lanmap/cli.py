@@ -291,6 +291,33 @@ def cmd_router(args) -> int:
     return 0
 
 
+def cmd_camera(args) -> int:
+    import getpass
+    from lanmap import ops
+    try:
+        if args.action == "forget":
+            print("Удалено." if ops.camera_forget(args.target) else "Сохранённого пароля не было.")
+            return 0
+        if args.action == "login":
+            st = ops.camera_status(args.target)
+            print(f"Камера {st['key']}. Пароль проверю настоящим кадром и сохраню в диспетчере учётных данных Windows. "
+                  "Лучше отдельный пользователь камеры только для просмотра.")
+            user = input("Логин: ").strip()
+            password = getpass.getpass("Пароль (не отображается): ")
+            saved, image = ops.camera_login(args.target, user, password)
+            print(f"Кадр получен ({len(image) // 1024} КБ), пароль сохранён (запись {saved['target']}).")
+        else:
+            image = ops.camera_snapshot(args.target)
+        if args.out:
+            Path(args.out).write_bytes(image)
+            print(f"Кадр сохранён: {args.out}")
+        elif args.action == "snapshot":
+            print(f"Кадр получен ({len(image) // 1024} КБ). Чтобы сохранить его, добавь --out кадр.jpg")
+    except ops.OpError as exc:
+        raise SystemExit(str(exc))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _utf8_console()
     parser = argparse.ArgumentParser(prog="lanmap", description="Срез и опознание устройств локальной сети. Только чтение.")
@@ -357,6 +384,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="probe — обезличенный «паспорт» роутера для заявки на модуль")
     p.add_argument("--host", help="адрес роутера (по умолчанию шлюз)")
     p.set_defaults(func=cmd_router)
+
+    p = sub.add_parser("camera", help="стоп-кадр с камеры по ONVIF (пароль вводит владелец)")
+    p.add_argument("action", choices=["login", "snapshot", "forget"])
+    p.add_argument("target", help="ключ, MAC или IP камеры из последнего среза")
+    p.add_argument("--out", help="куда сохранить кадр (JPEG); без него кадр только проверяется")
+    p.set_defaults(func=cmd_camera)
 
     args = parser.parse_args(argv)
     if os.name != "nt":

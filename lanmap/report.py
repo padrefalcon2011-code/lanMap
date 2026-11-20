@@ -203,6 +203,10 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
                "owner": reg.get("owner") or ""}
         acts.insert(0, f'<button class="act live-only sign" data-sign="{live({"key": dev["key"], **pre})}" '
                        f'data-id="s|{e(dev["key"])}">{icon("pencil", "s")}<span class="lbl">Подписать</span></button>')
+    if (dev.get("facts") or {}).get("onvif") or (dev.get("facts") or {}).get("onvif_urls"):
+        acts.insert(1 if dev.get("mac") else 0,
+                    f'<button class="act live-only" data-snap="{e(dev["key"])}" title="Стоп-кадр с камеры по ONVIF: '
+                    f'видно, куда она смотрит. Пароль камеры вводишь ты">{icon("camera", "s")}<span class="lbl">Кадр</span></button>')
     acts.append(f'<button class="act" data-share="{live(share_mod.payload(dev))}" title="Обезличенный рассказ об устройстве '
                 f'для заявки на GitHub: так LanMap научится его узнавать">{icon("question", "s")}'
                 f'<span class="lbl">Помочь опознать</span></button>')

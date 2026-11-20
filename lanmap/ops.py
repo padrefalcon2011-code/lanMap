@@ -16,6 +16,10 @@ class OpError(ValueError):
     """Понятная человеку ошибка действия: командная строка печатает её, сервер отдаёт кодом 400."""
 
 
+class NeedLogin(OpError):
+    """Нужен (другой) логин и пароль: страница покажет форму входа."""
+
+
 def pick_network(index: int | None = None, allow_large: bool = False) -> netinfo.LocalNet:
     nets = netinfo.list_networks()
     if index is not None:
@@ -240,3 +244,102 @@ def router_probe() -> str:
     """Обезличенный паспорт роутера для заявки на модуль (markdown). Без пароля, только чтение."""
     from lanmap.routers import probe
     return probe.to_markdown(probe.probe(pick_network(allow_large=True)))
+
+
+# --- камеры: стоп-кадр по ONVIF ---------------------------------------------------------------
+
+def camera_target(key: str) -> str:
+    return f"camera:{key}"
+
+
+def _camera_device(target: str) -> dict:
+    """Устройство последнего среза по ключу, MAC или IP, если оно отвечает по ONVIF."""
+    _snap, model = latest()
+    mac = norm_mac(target.partition("#")[0])
+    devs = model.get("devices") or []
+    dev = (next((d for d in devs if d["key"] == target), None)
+           or next((d for d in devs if target in (d.get("ips") or [])), None)
+           or (next((d for d in devs if d["key"].partition("#")[0] == mac), None) if mac and "#" not in target else None))
+    if not dev:
+        raise OpError(f"В последнем срезе нет устройства «{target}»")
+    facts = dev.get("facts") or {}
+    if not facts.get("onvif") and not facts.get("onvif_urls"):
+        raise OpError("Устройство не отвечало по ONVIF — стоп-кадр взять неоткуда")
+    return dev
+
+
+def _camera_address(dev: dict, probes=None) -> tuple:
+    """(ScanContext, проверенный IP, адрес службы ONVIF). Пароль уходит только туда, где ARP-ответ даёт MAC
+    этой камеры: заводской адрес Xiongmai держат сразу несколько камер. У MAC-двойников (ключ MAC#серийник)
+    сверяется и серийный номер из анонимного ONVIF."""
+    from lanmap import recheck as rc
+    from lanmap.collectors import ScanContext
+    net = pick_network()
+    ctx = ScanContext(local_ip=net.local_ip, network=net.network, gateway=net.gateway, if_index=net.if_index,
+                      local_mac=net.mac)
+    probes = probes or rc.Probes(ctx)
+    mac, _, serial = dev["key"].partition("#")
+    urls = (dev.get("facts") or {}).get("onvif_urls") or {}
+    ports = (dev.get("facts") or {}).get("ports") or []
+    other = False
+    for ip in dev.get("ips") or []:
+        if not ctx.in_scope(ip):
+            continue
+        url = urls.get(ip) or (f"http://{ip}:8899/onvif/device_service" if 8899 in ports
+                               else f"http://{ip}/onvif/device_service")
+        now = (probes.mac(ip) or "").upper()
+        if now != mac.upper():
+            other = other or bool(now)
+            continue
+        if serial and ((probes.onvif(url).get("fields") or {}).get("SerialNumber") or "") != serial:
+            other = True
+            continue
+        return ctx, ip, url
+    if other:
+        raise OpError("По адресу камеры сейчас отвечает другое устройство — пароль не отправлен. Сделай новый срез")
+    raise OpError("Камера не ответила — включена ли она? Пароль не отправлен")
+
+
+def _camera_snap(dev: dict, user: str, password: str, probes=None, poster=None, fetcher=None) -> bytes:
+    from lanmap.collectors import onvif
+    ctx, ip, url = _camera_address(dev, probes)
+    try:
+        return onvif.Camera(ctx, ip, url, user, password, poster, fetcher).snapshot()
+    except onvif.AuthError as exc:
+        raise NeedLogin(f"Камера: {exc}") from None
+    except onvif.OnvifError as exc:
+        raise OpError(f"Камера: {exc}") from None
+
+
+def camera_status(target: str) -> dict:
+    from lanmap import credentials
+    dev = _camera_device(target)
+    saved = credentials.load(camera_target(dev["key"]))
+    return {"key": dev["key"], "login": saved[0] if saved else None}
+
+
+def camera_login(target: str, username: str, password: str, **net) -> tuple[dict, bytes]:
+    """Проверить логин и пароль камеры настоящим кадром и сохранить в диспетчере учётных данных Windows.
+    Пароль не попадает ни в файлы, ни в ответ, ни в текст ошибки. Кадр — только в памяти."""
+    from lanmap import credentials
+    if not username or not password:
+        raise OpError("Нужны логин и пароль камеры")
+    dev = _camera_device(target)
+    image = _camera_snap(dev, username, password, **net)
+    credentials.save(camera_target(dev["key"]), username, password, comment=f"LanMap: камера {dev.get('title') or ''}".strip())
+    return {"key": dev["key"], "login": username, "target": "LanMap:" + camera_target(dev["key"])}, image
+
+
+def camera_snapshot(target: str, **net) -> bytes:
+    """JPEG-кадр с сохранённым паролем владельца. Нет пароля — OpError с просьбой войти."""
+    from lanmap import credentials
+    dev = _camera_device(target)
+    saved = credentials.load(camera_target(dev["key"]))
+    if not saved:
+        raise NeedLogin("Пароль камеры не сохранён: python -m lanmap camera login " + dev["key"])
+    return _camera_snap(dev, *saved, **net)
+
+
+def camera_forget(target: str) -> bool:
+    from lanmap import credentials
+    return credentials.delete(camera_target(_camera_device(target)["key"]))

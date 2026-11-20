@@ -382,6 +382,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(500, {"error": f"Ошибка LanMap: {exc}"})
             self.state.stop_watch()  # «Найти устройство» перезапустится уже без роутера
             return self._json(200, {"ok": True, "removed": removed})
+        if route.startswith("/api/camera/"):
+            return self._camera(route[len("/api/camera/"):], body)
         action = {"/api/sign": self._sign, "/api/finding": self._finding, "/api/check": self._check,
                   "/api/recheck": self._recheck}.get(route)
         if not action:
@@ -416,6 +418,29 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             reads = []
         return self._json(200, {"ok": True, **saved, "reads": reads})
+
+    def _camera(self, what: str, body: dict) -> None:
+        """Стоп-кадр: только чтение, без пересборки отчёта. Кадр живёт только в ответе (base64 в JSON), на диск
+        не пишется. Пароль из формы — как у роутера: в диспетчер учётных данных, не в ответ и не в ошибку."""
+        import base64
+        try:
+            key = self._str(body, "key")
+            if what == "snapshot":
+                image = ops.camera_snapshot(key)
+                return self._json(200, {"ok": True, "image": base64.b64encode(image).decode()})
+            if what == "login":
+                user, password = body.get("user"), body.get("password")
+                if not isinstance(user, str) or not isinstance(password, str) or not user.strip() or not password                         or len(user) > 200 or len(password) > 500:
+                    return self._json(400, {"error": "Нужны логин и пароль"})
+                saved, image = ops.camera_login(key, user.strip(), password)
+                return self._json(200, {"ok": True, "login": saved["login"], "image": base64.b64encode(image).decode()})
+            if what == "forget":
+                return self._json(200, {"ok": True, "removed": ops.camera_forget(key)})
+        except ops.OpError as exc:
+            return self._json(400, {"error": str(exc), "need_login": isinstance(exc, ops.NeedLogin)})
+        except Exception as exc:  # текст ошибки не показываем: в нём мог оказаться адрес кадра
+            return self._json(500, {"error": f"Ошибка LanMap при работе с камерой ({exc.__class__.__name__})"})
+        return self._json(404, {"error": "не найдено"})
 
     @staticmethod
     def _str(body: dict, name: str, required: bool = True) -> str | None:

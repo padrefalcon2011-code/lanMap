@@ -63,7 +63,7 @@ class _Dev:
         self.ips: list[str] = []
         self.facts: dict = {
             "ports": set(), "mdns_services": set(), "mdns_txt": {}, "mdns_hosts": set(), "mdns_instances": set(),
-            "upnp": {}, "onvif": {}, "http": [], "tls": [], "ssh": [], "rtsp": [], "banners": [],
+            "upnp": {}, "onvif": {}, "onvif_urls": {}, "http": [], "tls": [], "ssh": [], "rtsp": [], "banners": [],
             "ssdp_server": set(), "ssdp_st": set(), "wsd_types": set(), "netbios": None, "dns": set(),
             "router_names": set(), "smb": None, "smb1": None, "ttl": None, "alive": False, "arp": False, "duplicate_mac": False,
             "router": None, "router_only": False,
@@ -294,6 +294,8 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
         dev = by_ip.get(o.get("ip"))
         if not dev:
             continue
+        if o.get("url") and (o.get("fields") or o.get("auth_required")):
+            dev.facts["onvif_urls"][o["ip"]] = o["url"]  # для стоп-кадра: служба ONVIF у каждого адреса своя
         if o.get("fields"):
             dev.facts["onvif"] = {**o["fields"], "anonymous": True}
             f = o["fields"]

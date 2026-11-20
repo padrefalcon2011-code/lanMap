@@ -351,6 +351,8 @@ main.list .thead{grid-template-columns:auto 1fr auto;grid-template-areas:"icon m
  color:var(--fg);min-width:0;flex:1 1 170px}
 .lv input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .signf input{flex:1 1 150px}
+.snapf{margin-top:8px}.snapf img{display:block;max-width:100%;max-height:60vh;border-radius:10px;border:1px solid var(--line)}
+.snapf form.lv input{flex:1 1 140px}.snapf .msg{font-size:13px;margin:6px 0 0}.snapf .msg.err{color:var(--crit)}
 .act.sign{border-color:var(--accent);color:var(--accent);font-weight:600}
 .busy{opacity:.6;pointer-events:none}
 .scanbtn.busy svg{animation:spin 1s linear infinite}
@@ -620,6 +622,35 @@ if(L){
    try{await api('/api/sign',{key:d.key,fields},f);back(b.dataset.id);}catch(e){}};
   $('.save',f).addEventListener('click',save);$('[data-x]',f).addEventListener('click',()=>f.remove());
   f.addEventListener('keydown',e=>{if(e.key==='Enter')save();if(e.key==='Escape')f.remove();});}));
+
+ // стоп-кадр камеры по ONVIF: кадр только в памяти страницы; пароль — в диспетчер учётных данных Windows
+ async function snapCall(what,body){let r;
+  try{r=await fetch('/api/camera/'+what,{method:'POST',headers:{'Content-Type':'application/json','X-LanMap-Token':L.token},
+   body:JSON.stringify(body)});}catch(e){throw new Error('Сервер LanMap не отвечает: окно serve закрыто?');}
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(j.error||('ошибка '+r.status)),{need:!!j.need_login});return j;}
+ $$('[data-snap]').forEach(b=>b.addEventListener('click',ev=>{ev.stopPropagation();
+  const acts=b.closest('.acts');let f=acts.parentNode.querySelector('.snapf');
+  if(f){f.remove();return;}
+  const key=b.dataset.snap;f=document.createElement('div');f.className='snapf';acts.after(f);
+  const msg=(t,err)=>`<p class="msg${err?' err':' muted'}">${esc(t)}</p>`;
+  const show=j=>{f.innerHTML=`<img alt="стоп-кадр камеры" src="data:image/jpeg;base64,${j.image}">`
+    +`<div class="lv"><button class="sbtn" data-again>${ico('refresh')}ещё кадр</button>`
+    +`<button class="sbtn" data-forget>${ico('x')}забыть пароль</button></div>`;
+   $('[data-again]',f).addEventListener('click',take);
+   $('[data-forget]',f).addEventListener('click',async()=>{if(!confirm('Забыть пароль этой камеры?'))return;
+    try{await snapCall('forget',{key});f.remove();toast('Пароль камеры удалён');}catch(e){toast(e.message);}});};
+  const login=text=>{f.innerHTML=`<form class="lv" autocomplete="on"><input name="user" autocomplete="username" placeholder="логин камеры" maxlength="200" required>`
+    +`<input name="password" type="password" autocomplete="current-password" placeholder="пароль" maxlength="500" required>`
+    +`<button class="sbtn save" type="submit">${ico('camera')}<span>Кадр</span></button></form>`
+    +msg(text||'Пароль хранится в диспетчере учётных данных Windows. Лучше отдельный пользователь камеры только для просмотра.',!!text);
+   const form=$('form',f);form.user.focus();
+   form.addEventListener('submit',async e=>{e.preventDefault();const btn=$('button',form),pw=form.password;btn.classList.add('busy');
+    try{const j=await snapCall('login',{key,user:form.user.value.trim(),password:pw.value});pw.value='';show(j);}
+    catch(err){pw.value='';btn.classList.remove('busy');$('.msg',f).outerHTML=msg(err.message,true);pw.focus();}});};
+  async function take(){const img=$('img',f);if(img)img.style.opacity=.5;else f.innerHTML=msg('беру кадр…');
+   try{show(await snapCall('snapshot',{key}));}
+   catch(e){if(e.need)login(/не сохранён/.test(e.message)?'':e.message);else f.innerHTML=msg(e.message,true);}}
+  take();}));
 
  // новый срез: запуск и ход
  const sb=$('#scan'),ss=$('#scanst');let scanning=false;
