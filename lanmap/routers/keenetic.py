@@ -229,12 +229,17 @@ def normalize(raw: dict) -> dict:
     if "dhcp_hosts" in data and "dhcp_hosts" not in (raw.get("errors") or {}):
         reservations = [{"mac": (h.get("mac") or "").lower(), "ip": h.get("ip")}
                         for h in _list(data.get("dhcp_hosts")) if isinstance(h, dict) and h.get("mac")]
+    # Виды пробросов, прочитанные целиком: чтение не упало и секция есть в срезе
+    errors = raw.get("errors") or {}
+    forward_kinds = [kind for kind, name in (("upnp", "upnp_redirects"), ("static", "static_nat"))
+                     if name in data and name not in errors]
     return {
         "kind": "keenetic",
         "model": version.get("model") or version.get("device"),
         "firmware": version.get("title") or version.get("release"),
         "clients": clients,
         "forwards": forwards,
+        "forward_kinds": forward_kinds,
         "reservations": reservations,
         "errors": raw.get("errors", {}),
     }

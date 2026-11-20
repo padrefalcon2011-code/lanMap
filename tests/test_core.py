@@ -425,6 +425,21 @@ class SecurityTest(unittest.TestCase):
         self.assertEqual(upnp[0]["key"], "00:00:5E:00:53:0D")
         self.assertTrue(upnp[0]["router_based"])
 
+    def test_failed_forward_read_is_not_clean(self):
+        """Роутер ответил, но секция пробросов не прочиталась — «нечем проверить», а не «чисто»."""
+        from lanmap import forwards
+        from lanmap.routers import keenetic
+        raw = {"kind": "keenetic", "data": {"version": {}, "static_nat": []},
+               "errors": {"upnp_redirects": "show/upnp/redirect: HTTP 500"}}
+        router = keenetic.normalize(raw)
+        self.assertEqual(router["forward_kinds"], ["static"])
+        sec = self.run_checks(self.net(router=router))
+        self.assertFalse(sec["evaluated"]["UPNP_PORT_MAPPINGS"])
+        self.assertTrue(sec["evaluated"]["STATIC_PORT_FORWARD"])
+        # IGD, прочитанный до конца, закрывает дыру в UPnP
+        self.assertTrue(forwards.upnp_known({"router": router, "igd": {"complete": True}}))
+        self.assertEqual(forwards.known_kinds({"router": router}), {"static"})
+
     def test_card_lists_every_device_with_own_steps(self):
         """Карточка перечисляет все устройства; у каждого своя инструкция: под производителя или общая."""
         import re as _re

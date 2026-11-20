@@ -12,6 +12,7 @@
                 "uptime_s", "first_seen_s_ago", "last_seen_s_ago", "access", "via",
                 "dhcp" (адрес получен этим MAC по DHCP; устройство за мостом аренды не имеет)}],
    "forwards": [{"kind" (upnp/static), "protocol", "port", "to_ip", "to_port", "description", "interface"}],
+   "forward_kinds": ["upnp", "static"] — виды пробросов, прочитанные целиком (чтение не упало); нет ключа — все,
    "reservations": [{"mac", "ip"}] — резервации DHCP (закреплённые адреса) или None, если модуль их не читает,
    "errors": {...}}
 """

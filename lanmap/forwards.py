@@ -22,13 +22,19 @@ def merged(model: dict) -> list[dict]:
     return out
 
 
+def router_kinds(model: dict) -> set[str]:
+    """Виды пробросов, которые модуль роутера прочитал целиком. Упавшее чтение секции не даёт «чисто»."""
+    router = model.get("router")
+    if not router:
+        return set()
+    return set(router.get("forward_kinds", ("upnp", "static")))
+
+
 def upnp_known(model: dict) -> bool:
-    """Список UPnP-пробросов известен полностью: есть данные роутера или IGD прочитан до конца."""
-    return bool(model.get("router")) or bool((model.get("igd") or {}).get("complete"))
+    """Список UPnP-пробросов известен полностью: роутер прочитал их секцию или IGD прочитан до конца."""
+    return "upnp" in router_kinds(model) or bool((model.get("igd") or {}).get("complete"))
 
 
 def known_kinds(model: dict) -> set[str]:
     """Какие виды пробросов срез видит целиком (static — только через модуль роутера)."""
-    if model.get("router"):
-        return {"upnp", "static"}
-    return {"upnp"} if upnp_known(model) else set()
+    return router_kinds(model) | ({"upnp"} if upnp_known(model) else set())
