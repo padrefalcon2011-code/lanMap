@@ -123,6 +123,27 @@ class OnvifTest(unittest.TestCase):
         with self.assertRaises(onvif.AuthError):
             camera(FakeCamera(fetch_status=401)).snapshot()
 
+    def test_errors_hide_snapshot_url(self):
+        """Ошибка урлиба несёт адрес кадра (а в нём пароль владельца) — наружу идёт только имя класса."""
+        fake = FakeCamera()
+        def boom(url, user, password, limit):
+            raise ValueError(url)
+        fake.fetcher = boom
+        with self.assertRaises(onvif.OnvifError) as cm:
+            camera(fake).snapshot()
+        self.assertNotIn(OWNER_PW, str(cm.exception))
+        self.assertNotIn("webcapture", str(cm.exception))
+
+    def test_failed_authentication_fault(self):
+        fake = FakeCamera(auth_fault=True)
+        global FAULT
+        saved, FAULT = FAULT, FAULT.replace(b"ter:NotAuthorized", b"wsse:FailedAuthentication")
+        try:
+            with self.assertRaises(onvif.AuthError):
+                camera(fake).snapshot()
+        finally:
+            FAULT = saved
+
     def test_bad_uri_scheme(self):
         with self.assertRaises(onvif.OnvifError) as cm:
             camera(FakeCamera(uri="file:///C:/Windows/win.ini")).snapshot()

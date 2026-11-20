@@ -36,6 +36,7 @@ WSU = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utilit
 DIGEST = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest"
 B64 = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-soap-message-security-1.0#Base64Binary"
 MAX_IMAGE = 5_000_000
+AUTH_FAULTS = ("NotAuthorized", "FailedAuthentication", "InvalidSecurityToken")
 TIMEOUT = 5
 
 # (url, тело, заголовки) → (HTTP-статус, тело ответа). Подменяется в тестах.
@@ -165,14 +166,14 @@ class Camera:
             status, raw = self.poster(url, body, {
                 "Content-Type": f'application/soap+xml; charset=utf-8; action="{READ_ONLY_ACTIONS[action]}/{action}"',
                 "User-Agent": USER_AGENT})
-        except OSError as exc:
+        except Exception as exc:  # только имя класса: в тексте мог оказаться адрес кадра с паролем
             raise OnvifError(f"камера не ответила на {action} ({exc.__class__.__name__})") from None
         try:
             root = ET.fromstring(raw) if raw else None
         except ET.ParseError:
             root = None
         fault = _find(root, "Fault") if root is not None else None
-        if status == 401 or (fault is not None and "NotAuthorized" in "".join(fault.itertext())):
+        if status == 401 or (fault is not None and any(w in "".join(fault.itertext()) for w in AUTH_FAULTS)):
             raise AuthError("камера не приняла логин или пароль")
         if fault is not None or status != 200 or root is None:
             raise OnvifError(f"камера отказала в {action} (HTTP {status})")
@@ -224,7 +225,7 @@ class Camera:
         url = with_owner_creds(url, self.user, self.password)
         try:
             status, data = self.fetcher(url, self.user, self.password, MAX_IMAGE)
-        except OSError as exc:
+        except Exception as exc:  # только имя класса: в тексте мог оказаться адрес кадра с паролем
             raise OnvifError(f"камера не отдала кадр ({exc.__class__.__name__})") from None
         if status == 401:
             raise AuthError("камера не приняла логин или пароль для кадра")
