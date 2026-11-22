@@ -342,6 +342,17 @@ background:var(--p);color:#fff;white-space:nowrap}
 .hbox b{display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:12px}
 .cli{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
 .cli code{font-family:ui-monospace,Consolas,monospace;background:var(--chip);padding:2px 6px;border-radius:6px;color:var(--fg)}
+.scard.compact{gap:8px}
+.scard.compact>.frisk{margin:0;color:var(--muted)}
+.scard.compact .fobjs{gap:0;border:1px solid var(--line);border-radius:10px}
+.scard.compact .drow{border:0;border-radius:0}
+.scard.compact .drow+.drow{border-top:1px solid var(--line)}
+.scard.compact .drow.quiet{opacity:1}
+.scard.compact .dbody{display:grid;justify-items:start;gap:6px}
+.scard.compact .fstep,.scard.compact .vfy{margin:0;font-size:13px;line-height:1.5;max-width:95ch}
+.scard.compact .vfy{color:var(--muted);margin-bottom:6px}
+.scard.compact .fdata{display:flex;flex-wrap:wrap;align-items:center;gap:5px 8px}
+.scard.compact .cli code{overflow-wrap:anywhere}
 .sline{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px;margin-top:6px}
 .sline a{color:inherit}
 .ok-big{display:flex;align-items:center;gap:10px;color:var(--good);font-weight:600;padding:6px 0}
@@ -399,6 +410,12 @@ main.list .thead{grid-template-columns:auto 1fr auto;grid-template-areas:"icon m
 .lv input{font:inherit;font-size:13px;padding:7px 10px;border-radius:10px;border:1px solid var(--line);background:var(--card);
  color:var(--fg);min-width:0;flex:1 1 170px}
 .lv input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.scard.compact .lv{margin-top:0}
+.scard.compact .rc{background:var(--accent-soft);border-color:var(--accent)}
+.finding-status{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.finding-status [hidden]{display:none}
+.finding-status select{font:inherit;font-size:13px;padding:7px 10px;border-radius:10px;border:1px solid var(--line);
+ background:var(--card);color:var(--fg);max-width:100%}
 .signf input{flex:1 1 150px}
 .snapf{margin-top:8px}.snapf img{display:block;max-width:100%;max-height:60vh;border-radius:10px;border:1px solid var(--line)}
 .snapf form.lv input{flex:1 1 140px}.snapf .msg{font-size:13px;margin:6px 0 0}.snapf .msg.err{color:var(--crit)}
@@ -768,20 +785,44 @@ if(L){
  // после записи страница перезагружается с новым отчётом: вернуть прокрутку и раскрыть то, с чем работали
  function back(id){try{sessionStorage.setItem('lanmap.back',JSON.stringify({y:scrollY,id}))}catch(e){}location.reload();}
 
- // находка: статус кнопками + причина
+ // находка: статус, причина и перепроверка
  const FS=[['open','alert','открыта','crit'],['in_progress','wrench','в работе',''],['fixed','check','исправлена','good'],
   ['accepted','eye','оставляю','' ],['na','minus','не применимо','']];
  $$('[data-finding]').forEach(c=>{const d=JSON.parse(c.dataset.finding);
+  const compact=!!c.closest('.scard.compact');
+  const recheck=d.recheck?`<button type="button" class="sbtn rc" title="Проверить по сети ещё раз только эту находку">${ico('refresh')}перепроверить</button>`:'';
   c.className='lv';
-  c.innerHTML=FS.map(([k,i,t,cls])=>`<button class="sbtn ${cls}${d.status===k?' on':''}" data-st="${k}" title="${esc(t)}">${ico(i)}${esc(t)}</button>`).join('')
-   +`<input type="text" maxlength="300" placeholder="почему (для «оставляю»)" value="${esc(d.reason)}">`
-   +(d.recheck?`<button class="sbtn rc" title="Проверить по сети ещё раз только эту находку">${ico('refresh')}перепроверить</button>`:'');
+  if(compact){
+   const options=FS.map(([k,,t])=>`<option value="${k}">${esc(t)}</option>`).join('');
+   c.innerHTML=recheck+`<form class="finding-status">
+    <select aria-label="Изменить статус находки"><option value="" selected disabled>Изменить статус</option>${options}</select>
+    <input type="text" maxlength="300" aria-label="Причина, по которой оставляешь службы" placeholder="почему оставляешь" value="${esc(d.reason)}" hidden>
+    <button type="submit" class="sbtn" hidden>сохранить</button></form>`;
+  }else{
+   c.innerHTML=FS.map(([k,i,t,cls])=>`<button class="sbtn ${cls}${d.status===k?' on':''}" data-st="${k}" title="${esc(t)}">${ico(i)}${esc(t)}</button>`).join('')
+    +`<input type="text" maxlength="300" placeholder="почему (для «оставляю»)" value="${esc(d.reason)}">`+recheck;
+  }
   const inp=$('input',c),rc=$('.rc',c);
-  if(rc)rc.addEventListener('click',async()=>{rc.lastChild.textContent='проверяю…';
+  if(rc)rc.addEventListener('click',async()=>{
+   if(c.classList.contains('busy'))return;
+   rc.lastChild.textContent='проверяю…';
    try{await api('/api/recheck',{check:d.check,key:d.key},c);back(c.dataset.id);}
    catch(e){rc.lastChild.textContent='перепроверить';}});
-  $$('[data-st]',c).forEach(b=>b.addEventListener('click',async()=>{
-   try{await api('/api/finding',{check:d.check,key:d.key,status:b.dataset.st,reason:inp.value},c);back(c.dataset.id);}catch(e){}}));});
+  const saveStatus=async status=>{
+   if(!status||c.classList.contains('busy'))return;
+   try{await api('/api/finding',{check:d.check,key:d.key,status,reason:inp.value},c);back(c.dataset.id);}catch(e){}
+  };
+  if(compact){
+   const form=$('.finding-status',c),select=$('select',form),save=$('button',form);
+   select.addEventListener('change',()=>{
+    save.hidden=!select.value;
+    inp.hidden=select.value!=='accepted';
+   });
+   form.addEventListener('submit',e=>{e.preventDefault();saveStatus(select.value);});
+  }else{
+   $$('[data-st]',c).forEach(b=>b.addEventListener('click',()=>saveStatus(b.dataset.st)));
+  }
+ });
 
  // «Тест связи»: минуту ping до устройства и до роутера; ход — опросом /api/link
  const linkRow=(n,s)=>s?`<div>${esc(n)}: <b>${s.median==null?'—':s.median+' мс'}</b> медиана · потеряно <b>${s.lost}</b> из ${s.sent}</div>`:'';

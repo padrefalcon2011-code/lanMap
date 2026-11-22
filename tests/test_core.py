@@ -1043,6 +1043,33 @@ class SecurityTest(unittest.TestCase):
         self.assertTrue(any("FTP" in step for step in steps))
         self.assertTrue(any("MariaDB" in step for step in steps))
 
+    def test_nas_card_puts_open_finding_and_actions_first(self):
+        from lanmap import report, security
+
+        m = self.net()
+        m["devices"][2]["title"] = "Хранилище A"
+        other = sdev("00:00:5E:00:53:0F", "192.0.2.21", "nas", ports=[111])
+        other["title"] = "Хранилище B"
+        m["devices"].append(other)
+        check_id = "NAS_EXTRA_SERVICES"
+        self.run_checks(m, {security.uid(check_id, other["key"]): {"status": "accepted"}})
+
+        html_ = report._security(m)
+        card = html_.split(f'id="sec-{check_id}">', 1)[1].split("</article>", 1)[0]
+        first, quiet = card.split('<details class="drow quiet">', 1)
+        header = first.split('<details class="drow" open><summary>', 1)[1].split("</summary>", 1)[0]
+        self.assertIn("Хранилище A", header)
+        self.assertIn("RPC, NFS", header)
+        self.assertIn("открыта", header)
+        self.assertNotIn("2049", header)
+        self.assertNotIn('class="scheme"', card)
+        self.assertLess(first.index('class="fstep"'), first.index("data-finding="))
+        self.assertLess(first.index("data-finding="), first.index("Инструкция для Synology"))
+        self.assertIn("Панель управления → Файловые службы → NFS", first)
+        self.assertIn("python -m lanmap finding recheck", first)
+        self.assertIn("2049 NFS", first.split("Что обнаружил срез", 1)[1])
+        self.assertIn("принята осознанно", quiet.split("</summary>", 1)[0])
+
     def test_missing_raw_is_not_clean(self):
         sec = self.run_checks(self.net(), onvif=False, smb=False)
         self.assertFalse(sec["evaluated"]["CAMERA_ONVIF_ANON"])

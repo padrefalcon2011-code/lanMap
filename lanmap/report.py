@@ -815,7 +815,8 @@ def _scheme(check, items: list[dict]) -> str:
     return f'<div class="scheme" role="img" aria-label="{e(check.risk)}">{"".join(parts)}</div>'
 
 
-def _dev_row(check, f: dict, present: set[str], rvendor: str | None, advice: askai_mod.Advice) -> str:
+def _dev_row(check, f: dict, present: set[str], rvendor: str | None, advice: askai_mod.Advice, *,
+             expanded: bool = False) -> str:
     """Устройство находки: строка, по нажатию — инструкция именно для него и команда отметки."""
     conf = (f'<span class="conf {f["confidence"]}" title="Степень подтверждения">'
             f'{e(sec_mod.CONFIDENCE_NAMES[f["confidence"]])}</span>')
@@ -824,7 +825,6 @@ def _dev_row(check, f: dict, present: set[str], rvendor: str | None, advice: ask
     goto = (f'<button class="act goto" data-goto="{e(f["key"])}" title="Показать плитку устройства">'
             f'{icon("open", "s")}</button>' if f["key"] in present else "")
     steps, exact, rname = sec_mod.device_steps(check, f, rvendor)
-    ol = "".join(f"<li>{e(s)}</li>" for s in steps) + f'<li class="vfy"><b>Как проверить</b> · {e(check.verify)}</li>'
     target_name = (f.get("platform") or "").capitalize() or f.get("vendor") or "это устройство"
     kind = (f'<span class="vend">{icon("check", "s")}под {e(target_name)}</span>' if exact
             else f'<span class="vend gen">{icon("info", "s")}общая инструкция: названия пунктов у разных '
@@ -837,15 +837,40 @@ def _dev_row(check, f: dict, present: set[str], rvendor: str | None, advice: ask
     now = {"fixed_pending": "fixed", "fixed_verified": "fixed", "regress": "open"}.get(f["status"], f["status"])
     mark = {"check": check.id, "key": f["key"], "status": now, "reason": f.get("reason") or "",
             "recheck": check.id in RECHECKABLE}
-    return (f'<details class="drow{quiet}"><summary>{icon("chevron", "s chev")}'
+    compact = check.id == "NAS_EXTRA_SERVICES"
+    commands = (f'Отметить (in_progress, fixed, accepted — оставляю осознанно): <code>{e(cmd)}</code>'
+                f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
+                f'<span class="lbl">копировать</span></button>{_recheck_cmd(check, target)}')
+    if compact:
+        commands = (f'<details class="more"><summary>{icon("copy", "s")}Команды для статуса и перепроверки</summary>'
+                    f'<div class="cli">{commands}</div></details>')
+    actions = (f'<div class="cli" data-finding="{live(mark)}" data-id="f|{e(check.id)}|{e(f["key"])}">'
+               f'{commands}</div>')
+    status, checked = _status_chip(f), _recheck_chip(f)
+    detail = f'<span class="det">{e(f["detail"])}</span>'
+    summary = f'{ip}{detail}{conf}{status}{checked}'
+    remaining = steps[1:] if compact else steps
+    ol = "".join(f"<li>{e(s)}</li>" for s in remaining)
+    verify = f'<b>Как проверить</b> · {e(check.verify)}'
+    prompt = _advice_button(advice.finding(check, f))
+    if compact:
+        labels = [sec_mod.NAS_EXTRA_PORTS[p] for p in f.get("ports") or [] if p in sec_mod.NAS_EXTRA_PORTS]
+        services = ", ".join(label.split(" (", 1)[0] for label in labels)
+        status = status or f'<span class="st">{e(sec_mod.STATUSES["open"])}</span>'
+        summary = f'<span class="det">{e(services)}</span>{status}' if services else status
+        title = f'Инструкция для {target_name}' if exact else "Инструкция"
+        instructions = f'<ol start="2">{ol}</ol>' if ol else ""
+        first = f'<p class="fstep">{e(steps[0])}</p>' if steps else ""
+        body = (f'{first}{actions}{checked}'
+                f'<details class="more"><summary>{icon("wrench", "s")}{e(title)}</summary>'
+                f'{kind}{instructions}<p class="vfy">{verify}</p>{prompt}</details>'
+                f'<details class="more"><summary>{icon("info", "s")}Что обнаружил срез</summary>'
+                f'<div class="fdata">{ip}{detail}{conf}</div></details>')
+    else:
+        body = f'{kind}<ol>{ol}<li class="vfy">{verify}</li></ol>{prompt}{actions}'
+    return (f'<details class="drow{quiet}"{" open" if expanded else ""}><summary>{icon("chevron", "s chev")}'
             f'<span class="who"><span style="color:{color};display:inline-flex">{icon(type_icon(f.get("type")))}</span>'
-            f'{e(f["title"])}</span>{ip}<span class="det">{e(f["detail"])}</span>{conf}{_status_chip(f)}{_recheck_chip(f)}'
-            f'{goto}</summary>'
-            f'<div class="dbody">{kind}<ol>{ol}</ol>{_advice_button(advice.finding(check, f))}'
-            f'<div class="cli" data-finding="{live(mark)}" data-id="f|{e(check.id)}|{e(f["key"])}">'
-            f'Отметить (in_progress, fixed, accepted — оставляю осознанно): <code>{e(cmd)}</code>'
-            f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
-            f'<span class="lbl">копировать</span></button>{_recheck_cmd(check, target)}</div></div></details>')
+            f'{e(f["title"])}</span>{summary}{goto}</summary><div class="dbody">{body}</div></details>')
 
 
 def _recheck_cmd(check, target: str) -> str:
@@ -858,9 +883,24 @@ def _recheck_cmd(check, target: str) -> str:
 
 
 def _finding_card(check, items: list[dict], present: set[str], rvendor: str | None, advice: askai_mod.Advice) -> str:
-    """Карточка проверки в виде инфографики: схема, чем грозит, план, устройства с инструкциями."""
+    """Карточка проверки с устройствами, риском и инструкциями."""
     live = [f for f in items if f["status"] not in sec_mod.QUIET_STATUSES]
     prio = min(f["priority"] for f in (live or items))
+    compact = check.id == "NAS_EXTRA_SERVICES"
+    first = live[0] if compact and live else None
+    rows = "".join(_dev_row(check, f, present, rvendor, advice, expanded=f is first) for f in items)
+    start = (f'<article class="scard p{prio}{" quiet" if not live else ""}{" compact" if compact else ""}" '
+             f'id="sec-{e(check.id)}">')
+    priority = f'<span class="prio">{icon("alert", "s")}{e(sec_mod.PRIORITY_NAMES[prio])}</span>'
+    more_label = "Подробнее о риске" if compact else "Подробнее"
+    more = (f'<details class="more"><summary>{icon("info", "s")}{more_label}</summary><p class="frisk">{e(check.risk)}</p>'
+            f'<div class="hgrid"><div class="hbox"><b>{icon("alert", "s")}Что может сломаться</b>{e(check.breaks)}</div>'
+            f'<div class="hbox"><b>{icon("undo", "s")}Как вернуть</b>{e(check.rollback)}</div>'
+            f'<div class="hbox"><b>{icon("check", "s")}Как убедиться</b>{e(check.verify)}</div></div></details>')
+    if compact:
+        return (f'{start}<div class="fhead"><h3>{e(check.title)}</h3>{priority}</div>'
+                f'<p class="frisk">При слишком широких разрешениях другие устройства в сети могут получить доступ к файлам.</p>'
+                f'<div class="fobjs">{rows}</div>{more}</article>')
     who = (f'<span class="facet {"net" if check.who == "internet" else ""}" '
            f'{tip("Кто может воспользоваться: " + sec_mod.WHO_NAMES[check.who])}>{icon(WHO_ICONS[check.who])}</span>')
     stakes = "".join(f'<span class="facet" {tip("Под угрозой: " + sec_mod.STAKE_NAMES[x])}>'
@@ -872,17 +912,11 @@ def _finding_card(check, items: list[dict], present: set[str], rvendor: str | No
     dev_ico = types.pop() if len(types) == 1 else "devices"
     todo = "".join(f'<li><span class="nm">{i}</span>{icon(dev_ico if ico == "@dev" else ico)}<span>{e(text)}</span></li>'
                    for i, (ico, text) in enumerate(check.todo, 1))
-    rows = "".join(_dev_row(check, f, present, rvendor, advice) for f in items)
-    more = (f'<details class="more"><summary>{icon("info", "s")}Подробнее</summary><p class="frisk">{e(check.risk)}</p>'
-            f'<div class="hgrid"><div class="hbox"><b>{icon("alert", "s")}Что может сломаться</b>{e(check.breaks)}</div>'
-            f'<div class="hbox"><b>{icon("undo", "s")}Как вернуть</b>{e(check.rollback)}</div>'
-            f'<div class="hbox"><b>{icon("check", "s")}Как убедиться</b>{e(check.verify)}</div></div></details>')
     note_text = REACH_NOTES.get(next((f.get("reach") for f in items if f.get("reach")), None), check.note)
     note = f'<div class="fnote">{icon("info", "s")}<span>{e(note_text)}</span></div>' if note_text else ""
-    return (f'<article class="scard p{prio}{" quiet" if not live else ""}" id="sec-{e(check.id)}">'
+    return (f'{start}'
             f'<div class="fhead"><span class="fico">{icon(check.icon)}</span><h3>{e(check.title)}</h3>'
-            f'<span class="prio">{icon("alert", "s")}{e(sec_mod.PRIORITY_NAMES[prio])}</span>'
-            f'<span class="facets">{who}<i class="sep"></i>{stakes}</span></div>'
+            f'{priority}<span class="facets">{who}<i class="sep"></i>{stakes}</span></div>'
             f'{_scheme(check, items)}'
             f'{"<div class=threat><span class=lbl2>Чем грозит</span>" + threat + "</div>" if threat else ""}'
             f'{"<ol class=todo>" + todo + "</ol>" if todo else ""}'
