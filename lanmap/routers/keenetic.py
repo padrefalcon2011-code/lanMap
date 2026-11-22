@@ -2,7 +2,8 @@
 
 Вход: «вызов — ответ» (X-NDM-Challenge): пароль по сети не передаётся, только хэш.
 Клиент умеет делать ТОЛЬКО GET-запросы к /rci/… (плюс POST /auth для входа). Любая запись
-невозможна на уровне кода: метода для неё нет.
+невозможна на уровне кода: метода для неё нет. Переадресации (3xx) не выполняются: иначе роутер (или кто-то
+на его адресе) мог бы увести запрос — с хэшем пароля и cookie — за пределы локальной подсети.
 """
 from __future__ import annotations
 
@@ -38,13 +39,24 @@ class KeeneticError(Exception):
     pass
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """3xx не выполняется, а приходит как HTTPError: запросы идут только на адрес шлюза."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def _opener(*handlers) -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect(), *handlers)
+
+
 def credential_target(host: str) -> str:
     return f"router:{host}"
 
 
 def is_keenetic(host: str, timeout: float = 4) -> str | None:
     """Модель (X-NDM-Product), если по адресу отвечает Keenetic. Без входа."""
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = _opener()
     try:
         opener.open(urllib.request.Request(f"http://{host}/auth", headers={"User-Agent": USER_AGENT}), timeout=timeout)
     except urllib.error.HTTPError as exc:
@@ -60,8 +72,7 @@ class KeeneticClient:
         self.base = f"http://{host}"
         self.timeout = timeout
         self.jar = http.cookiejar.CookieJar()
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
-                                                  urllib.request.HTTPCookieProcessor(self.jar))
+        self.opener = _opener(urllib.request.HTTPCookieProcessor(self.jar))
 
     def _request(self, path: str, data: bytes | None = None):
         headers = {"User-Agent": USER_AGENT}

@@ -698,6 +698,44 @@ class ChecklistTest(unittest.TestCase):
         self.assertEqual((d["better"], d["worse"]), (["E1"], ["E2"]))  # E3 и E4 нечем было проверить — не изменение
         self.assertEqual((d["old"], d["new"]), (2, 2))
 
+    def test_keenetic_no_redirects(self):
+        """Клиент Keenetic не идёт по переадресации: запрос не уходит с адреса шлюза."""
+        import http.server
+        import threading
+        from lanmap.routers import keenetic
+        hits = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                hits.append(self.path)
+                if self.path.startswith("/elsewhere"):
+                    self.send_response(401)
+                    self.send_header("X-NDM-Challenge", "x")
+                    self.send_header("X-NDM-Realm", "r")
+                    self.end_headers()
+                    return
+                self.send_response(302)
+                self.send_header("Location", "/elsewhere" + self.path)
+                self.end_headers()
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            host = f"127.0.0.1:{srv.server_address[1]}"
+            self.assertIsNone(keenetic.is_keenetic(host, timeout=2))
+            client = keenetic.KeeneticClient(host, timeout=2)
+            with self.assertRaises(keenetic.KeeneticError):
+                client.get("show/version")
+            with self.assertRaises(keenetic.KeeneticError):
+                client.login("admin", "x")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertEqual(hits, ["/auth", "/rci/show/version", "/auth"])
+
     def test_keenetic_reservations(self):
         from lanmap.routers import keenetic
         base = {"kind": "keenetic", "data": {"version": {}}, "errors": {}}
