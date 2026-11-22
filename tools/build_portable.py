@@ -29,7 +29,8 @@ PY_VERSION = "3.14.10"
 PY_URL = f"https://www.python.org/ftp/python/{PY_VERSION}/python-{PY_VERSION}-embed-amd64.zip"
 PY_SHA256 = "90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159"  # со страницы выпуска python.org
 
-FILES = ["lanmap", "LanMap.bat", "LICENSE", "README.md"]  # что из репозитория едет в архив
+# что из репозитория едет в архив; docs/ и AGENTS.md — на них ссылается README (картинки, концепция)
+FILES = ["lanmap", "LanMap.bat", "LICENSE", "README.md", "AGENTS.md", "docs"]
 APP = "LanMap"  # папка внутри архива: без версии, чтобы новую версию распаковывали поверх и data/ оставалась
 
 PRIVATE_IP = re.compile(r"\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b")
@@ -105,6 +106,25 @@ def privacy_check(stage: Path) -> None:
                 raise SystemExit(f"{what} в {rel}: {m.group(0)}")
 
 
+LINK = re.compile(r"\]\(([^)\s]+)\)|\bsrc=\"([^\"]+)\"")
+
+
+def broken_links(stage: Path) -> list[str]:
+    """Относительные ссылки и картинки в .md архива, которых в архиве нет («README.md → docs/x.svg»)."""
+    out = []
+    for md in sorted(stage.rglob("*.md")):
+        rel = md.relative_to(stage)
+        if rel.parts[0] == "python":
+            continue
+        for m in LINK.finditer(md.read_text("utf-8", "replace")):
+            target = (m.group(1) or m.group(2)).split("#", 1)[0]
+            if not target or re.match(r"[a-z][a-z0-9+.-]*:", target, re.I):  # якорь, https:, mailto:
+                continue
+            if not (md.parent / target).exists():
+                out.append(f"{rel.as_posix()} → {target}")
+    return out
+
+
 def build() -> Path:
     stage = DIST / "build" / APP
     shutil.rmtree(stage.parent, ignore_errors=True)
@@ -123,6 +143,9 @@ def build() -> Path:
         shutil.copyfile(ROOT / name, dest)
     (stage / "README.txt").write_text(README_TXT.replace("\n", "\r\n"), "utf-8-sig")
     privacy_check(stage)
+    broken = broken_links(stage)
+    if broken:
+        raise SystemExit("Ссылки внутри архива ведут в никуда — добавь файлы в FILES:\n" + "\n".join(broken))
 
     out = DIST / f"{APP}-{version()}-win64.zip"
     out.unlink(missing_ok=True)

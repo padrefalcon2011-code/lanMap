@@ -1830,6 +1830,25 @@ class PortableTest(unittest.TestCase):
                 with mock.patch.object(Path, "write_bytes", side_effect=PermissionError("только чтение")):
                     self.assertEqual(util._choose(root), local / "LanMap" / "data")
 
+    def test_archive_links_resolve(self):
+        """README в архиве ссылается на docs/ и AGENTS.md: всё, на что ссылаются .md, едет в архив (FILES)."""
+        import importlib.util
+        import shutil
+        spec = importlib.util.spec_from_file_location("build_portable", PACKAGE_DIR.parent / "tools" / "build_portable.py")
+        bp = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bp)
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp)
+            for name in bp.FILES:
+                src = bp.ROOT / name
+                if src.is_dir():
+                    shutil.copytree(src, stage / name, ignore=shutil.ignore_patterns("__pycache__"))
+                else:
+                    shutil.copyfile(src, stage / name)
+            self.assertEqual(bp.broken_links(stage), [])
+            (stage / "README.md").write_text("![x](docs/нет.svg) [ok](https://example.com) [a](#top)", "utf-8")
+            self.assertEqual(bp.broken_links(stage), ["README.md → docs/нет.svg"])
+
     def test_lanmap_data_env_wins(self):
         from lanmap import util
         self.assertEqual(util.data_dir(), Path(TMP.name))
