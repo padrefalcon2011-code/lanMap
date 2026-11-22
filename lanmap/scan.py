@@ -67,6 +67,51 @@ class Progress:
             self.on_step(text)
 
 
+class Passport:
+    """Паспорт полноты среза: исход каждого этапа — ok, partial, skipped, error — и короткое пояснение.
+
+    Обязательные этапы (ping, ARP, порты) при сбое обрывают срез: он остаётся незавершённым. Необязательные идут
+    через guard: исключение пишется в паспорт, сырой файл этапа не создаётся, и его проверки честно говорят
+    «нечем проверить»."""
+
+    def __init__(self):
+        self.items: list[dict] = []
+
+    def add(self, sid: str, status: str, detail: str = "") -> None:
+        self.items.append({"id": sid, "status": status, "detail": detail})
+
+    def guard(self, sid: str, fn, default=None):
+        """→ (результат, удалось ли)."""
+        try:
+            return fn(), True
+        except Exception as exc:
+            self.add(sid, "error", _err(exc))
+            return default, False
+
+
+def _err(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"[:160]
+
+
+def _each(fn, fails: list):
+    """Опрос одного адреса: сбой на нём не отменяет остальные (pool.map бросил бы исключение на всё сразу)."""
+    def call(x):
+        try:
+            return fn(x)
+        except Exception as exc:
+            fails.append(type(exc).__name__)
+            return None
+    return call
+
+
+def _status(fails: list, done: int) -> str:
+    return "ok" if not fails else ("partial" if done else "error")
+
+
+def _failed(fails: list) -> str:
+    return f"; сбоев: {len(fails)} ({', '.join(sorted(set(fails)))})" if fails else ""
+
+
 async def _ports_and_probes(ctx: ScanContext, targets: dict[str, list[int]], progress: Progress) -> tuple[dict, list]:
     sem = asyncio.Semaphore(256)
     ips = sorted(targets)
@@ -87,6 +132,7 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
     snap = new_snapshot_dir()
     raw = snap / "raw"
     progress = Progress(quiet, on_step)
+    passport = Passport()
     meta = {
         "lanmap_version": __version__,
         "started": now_iso(),
@@ -107,6 +153,11 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
     write_json(raw / "ping.json", pings)
     write_json(raw / "multicast.json", multi)
     write_json(raw / "wsd.json", wsd)
+    alive_n = sum(1 for p in pings.values() if p.get("alive"))
+    passport.add("discovery", "partial" if multi.get("errors") else "ok",
+                 f"ping: ответили {alive_n} из {len(pings)} · mDNS {len(multi.get('mdns', []))} · "
+                 f"SSDP {len(multi.get('ssdp', []))} · WS-Discovery {len(wsd)}"
+                 + (f"; ошибок мультикаста: {len(multi['errors'])}" if multi.get("errors") else ""))
 
     neighbors = discovery.neighbor_table(ctx)
     write_json(raw / "neighbors.json", neighbors)
@@ -120,6 +171,7 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
     progress.step(f"Кандидатов: {len(candidates)}. Уточняю MAC через ARP")
     arp = discovery.arp_query(ctx, sorted(candidates))
     write_json(raw / "arp.json", arp)
+    passport.add("arp", "ok", f"кандидатов {len(candidates)}, MAC по ARP: {sum(1 for a in arp if a.get('mac'))}")
 
     extra = announced_ports(multi, ctx)
     targets = {ip: sorted(set(ports) | extra.get(ip, set())) for ip in candidates}
@@ -134,46 +186,89 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
     write_json(raw / "ports.json", {"tested": ports, "announced_extra": {k: sorted(v) for k, v in extra.items()},
                                     "open": open_ports})
     write_json(raw / "probes.json", probes)
+    passport.add("ports", "ok", f"{len(ports)} портов на {len(targets)} адресах · открыто "
+                                f"{sum(len(v) for v in open_ports.values())} · ответов служб {len(probes)}")
 
     if ctx.gateway:
         from lanmap import routers
         progress.step("Роутер: список клиентов и пробросов (только чтение)")
-        router = routers.collect(ctx.gateway)
-        write_json(raw / "router.json", router)
-        if router.get("skipped") or router.get("errors", {}).get("login"):
-            progress.step("Данные роутера недоступны: " + (router.get("skipped") or router["errors"]["login"]))
+        router, ok = passport.guard("router", lambda: routers.collect(ctx.gateway))
+        if ok:
+            write_json(raw / "router.json", router)
+            errors = router.get("errors") or {}
+            if router.get("skipped"):
+                passport.add("router", "skipped", router["skipped"])
+            elif errors.get("login"):
+                passport.add("router", "error", errors["login"])
+            else:
+                passport.add("router", "partial" if errors else "ok",
+                             ("не прочитано: " + ", ".join(sorted(errors))) if errors else router.get("product") or "")
+            if router.get("skipped") or errors.get("login"):
+                progress.step("Данные роутера недоступны: " + (router.get("skipped") or errors["login"]))
+    else:
+        passport.add("router", "skipped", "у сети нет шлюза")
 
     progress.step("Имена (DNS, роутер, NetBIOS), UPnP-описания, ONVIF, SMB (и SMB1)")
     ips = sorted(candidates)
+    f_names, f_smb, f_onvif, f_leak = [], [], [], []
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
-        f_rdns = pool.map(protocols.reverse_dns, ips)
-        f_ptr = pool.map(lambda ip: protocols.gateway_ptr(ctx, ip), ips)
-        f_nb = pool.map(lambda ip: protocols.netbios_status(ctx, ip), ips)
+        f_rdns = pool.map(_each(protocols.reverse_dns, f_names), ips)
+        f_ptr = pool.map(_each(lambda ip: protocols.gateway_ptr(ctx, ip), f_names), ips)
+        f_nb = pool.map(_each(lambda ip: protocols.netbios_status(ctx, ip), f_names), ips)
         names = {
-            "reverse_dns": dict(f_rdns),
-            "gateway_ptr": dict(f_ptr),
+            "reverse_dns": dict(x for x in f_rdns if x),
+            "gateway_ptr": dict(x for x in f_ptr if x),
             "netbios": [x for x in f_nb if x],
         }
         smb_hosts = [ip for ip, p in open_ports.items() if 445 in p]
-        f_smb = pool.map(lambda ip: protocols.smb_probe(ctx, ip), smb_hosts)
-        f_onvif = pool.map(lambda url: protocols.onvif_info(ctx, url), protocols.onvif_targets(ctx, wsd, open_ports))
-        upnp = protocols.upnp_descriptions(ctx, multi.get("ssdp", []))
-        smb, onvif = list(f_smb), list(f_onvif)
+        f_smb_res = pool.map(_each(lambda ip: protocols.smb_probe(ctx, ip), f_smb), smb_hosts)
+        onvif_urls, onvif_ok = passport.guard("onvif", lambda: protocols.onvif_targets(ctx, wsd, open_ports), [])
+        f_onvif_res = pool.map(_each(lambda url: protocols.onvif_info(ctx, url), f_onvif), onvif_urls)
+        upnp, upnp_ok = passport.guard("upnp", lambda: protocols.upnp_descriptions(ctx, multi.get("ssdp", [])), [])
+        smb = [x for x in f_smb_res if x is not None]
+        onvif = [x for x in f_onvif_res if x is not None]
         # Отдаёт ли камера без пароля адрес кадра со своим паролем (сам адрес не сохраняется)
         answered = [o for o in onvif if o.get("fields") or o.get("auth_required")]
-        snap_leak = list(pool.map(lambda o: onvif_mod.snapshot_leak(ctx, o["ip"], o["url"]), answered))
+        snap_leak = [x for x in pool.map(_each(lambda o: onvif_mod.snapshot_leak(ctx, o["ip"], o["url"]), f_leak),
+                                         answered) if x is not None]
     write_json(raw / "names.json", names)
-    write_json(raw / "upnp.json", upnp)
+    passport.add("names", _status(f_names, len(ips)),
+                 f"DNS {sum(1 for v in names['reverse_dns'].values() if v)} · "
+                 f"от роутера {sum(1 for v in names['gateway_ptr'].values() if v)} · NetBIOS {len(names['netbios'])}"
+                 + _failed(f_names))
+    if upnp_ok:
+        write_json(raw / "upnp.json", upnp)
+        passport.add("upnp", "ok", f"описаний {len(upnp)}")
     progress.step("UPnP-пробросы у шлюза (без пароля, только чтение)")
-    write_json(raw / "upnp_igd.json", igd.collect(ctx, upnp))
-    write_json(raw / "onvif.json", onvif)
-    write_json(raw / "onvif_snapshot.json", snap_leak)
+    gw, ok = passport.guard("igd", lambda: igd.collect(ctx, upnp))
+    if ok:
+        write_json(raw / "upnp_igd.json", gw)
+        n_gw = len((gw or {}).get("gateways") or [])
+        # UPnP у шлюза выключен — это хорошо, а не пробел в проверке
+        passport.add("igd", "ok", f"шлюзов с UPnP: {n_gw}" if n_gw else "UPnP IGD у шлюза выключен или молчит")
+    if onvif_ok:
+        write_json(raw / "onvif.json", onvif)
+        write_json(raw / "onvif_snapshot.json", snap_leak)
+        passport.add("onvif", _status(f_onvif + f_leak, len(onvif)) if onvif_urls else "ok",
+                     (f"камер ответило {len(answered)} из {len(onvif_urls)}" if onvif_urls
+                      else "камер с ONVIF не видно") + _failed(f_onvif + f_leak))
     write_json(raw / "smb.json", smb)
-    write_json(raw / "windows.json", windows.collect())
+    passport.add("smb", _status(f_smb, len(smb)) if smb_hosts else "ok",
+                 (f"опрошено {len(smb)} из {len(smb_hosts)}" if smb_hosts else "нет устройств с портом 445")
+                 + _failed(f_smb))
+    win, ok = passport.guard("windows", windows.collect)
+    if ok:
+        write_json(raw / "windows.json", win)
+        if win.get("skipped"):
+            passport.add("windows", "skipped", win["skipped"])
+        else:
+            passport.add("windows", "partial" if win.get("error") else "ok",
+                         "реестр: " + ("не прочитан" if win.get("error") else "прочитан (клиент SMB1)"))
 
     meta["finished"] = now_iso()
     meta["stages"] = progress.stages
     meta["candidates"] = len(candidates)
+    meta["passport"] = passport.items
     # Манифест сырых файлов — той же записью, что и finished: завершённый срез без манифеста бывает только старый
     meta["manifest"] = snapshot.manifest(snap)
     write_json(snap / "meta.json", meta)

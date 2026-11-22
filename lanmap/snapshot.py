@@ -16,6 +16,14 @@ from pathlib import Path
 
 from lanmap.util import read_json
 
+# Этапы паспорта полноты (meta.passport, пишет scan.Passport) — в порядке среза
+STAGES = {
+    "discovery": "Поиск устройств", "arp": "MAC-адреса (ARP)", "ports": "Порты и ответы служб", "router": "Роутер",
+    "names": "Имена", "upnp": "UPnP-описания", "igd": "UPnP-пробросы у шлюза", "onvif": "Камеры (ONVIF)",
+    "smb": "SMB", "windows": "Этот компьютер",
+}
+PASS_NAMES = {"ok": "выполнен", "partial": "частично", "skipped": "пропущен", "error": "ошибка"}
+
 # Без них срез не годится: из них строятся устройства и охват портов. Пишутся первыми, есть во всех срезах
 CORE_RAW = ("ping.json", "neighbors.json", "arp.json", "ports.json", "probes.json")
 NAME_RE = re.compile(r"(\d{4}-\d\d-\d\d_\d{6})(?:_(\d+))?$")

@@ -98,7 +98,10 @@ details.about[open]>summary{color:var(--fg)}
 .agrid b{font-weight:500;overflow-wrap:anywhere}.agrid svg.i{color:var(--muted)}
 .agrid .ring{width:22px!important;height:22px!important}
 .awarn{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--warn-soft);color:var(--warn-text);border-radius:9px;padding:6px 10px}
-.abody p{margin:0}
+.abody p{margin:0}.ptitle{font-weight:600;margin-top:4px}
+.agrid.pass .good svg.i{color:var(--good)}.agrid.pass .warn svg.i{color:var(--warn)}
+.agrid.pass .crit svg.i{color:var(--crit)}.agrid.pass .skip svg.i{color:var(--faint)}
+.agrid.pass .warn b{color:var(--warn-text)}.agrid.pass .crit b{color:var(--crit)}
 /* сводка: главная находка крупно, показатели — кнопки к разделам и фильтрам */
 .sum{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin:12px 0}
 .alert{grid-column:span 2;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer;color:var(--fg);

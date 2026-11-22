@@ -130,6 +130,86 @@ class SnapshotCheckTest(unittest.TestCase):
         self.assertIn("проверка неполная", about)
 
 
+class ScanPassportTest(unittest.TestCase):
+    """run_scan на подставной сети: сбой необязательного этапа не обрывает срез, а пишется в паспорт."""
+
+    def run_scan(self, **broken):
+        from unittest import mock
+        from lanmap import netinfo, routers, scan
+        from lanmap.collectors import discovery, igd, protocols, tcp, windows
+        from lanmap.collectors import onvif as onvif_mod
+        net = netinfo.LocalNet(if_index=1, alias="test", description="", local_ip="192.0.2.5", prefix=29,
+                               network="192.0.2.0/29", gateway="192.0.2.1", mac=MAC_C, hardware=True, up=True)
+        own = Path(tempfile.mkdtemp(dir=TMP.name))
+
+        async def ports_and_probes(ctx, targets, progress):
+            return {"192.0.2.2": [445], "192.0.2.3": [445]}, []
+
+        def smb(ctx, ip):
+            if ip == "192.0.2.3":
+                raise TimeoutError("нет ответа")
+            return {"dialect": "0x311"}
+
+        def boom(*a, **kw):
+            raise OSError("сбой")
+
+        patches = [
+            mock.patch.object(netinfo, "is_admin", lambda: True),
+            mock.patch.object(netinfo, "hostname", lambda: "TESTPC"),
+            mock.patch.object(discovery, "multicast", lambda ctx: {"mdns": [], "ssdp": [], "errors": []}),
+            mock.patch.object(discovery, "ws_discovery", lambda ctx: []),
+            mock.patch.object(discovery, "ping_sweep", lambda ctx: {"192.0.2.2": {"alive": True},
+                                                                    "192.0.2.3": {"alive": True}}),
+            mock.patch.object(discovery, "neighbor_table", lambda ctx: []),
+            mock.patch.object(discovery, "arp_query", lambda ctx, ips: [{"ip": i, "mac": MAC_B} for i in ips]),
+            mock.patch.object(scan, "_ports_and_probes", ports_and_probes),
+            mock.patch.object(routers, "collect", lambda host: {"host": host, "kind": None, "skipped": "нет модуля"}),
+            mock.patch.object(protocols, "reverse_dns", lambda ip: (ip, None)),
+            mock.patch.object(protocols, "gateway_ptr", lambda ctx, ip: (ip, [])),
+            mock.patch.object(protocols, "netbios_status", lambda ctx, ip: None),
+            mock.patch.object(protocols, "smb_probe", smb),
+            mock.patch.object(protocols, "onvif_targets", lambda ctx, wsd, ports: []),
+            mock.patch.object(protocols, "upnp_descriptions", boom if broken.get("upnp") else lambda ctx, s: []),
+            mock.patch.object(igd, "collect", lambda ctx, upnp: {"gateways": []}),
+            mock.patch.object(onvif_mod, "snapshot_leak", boom),
+            mock.patch.object(windows, "collect", lambda: {"platform": "windows", "smb1_client": False}),
+            mock.patch.object(tcp, "sweep_cert_tmp", lambda: []),
+            mock.patch.object(scan, "snapshots_dir", lambda: own),  # не трогать общий тестовый каталог срезов
+        ]
+        for x in patches:
+            x.start()
+        try:
+            return scan.run_scan(net, ports=[445], quiet=True)
+        finally:
+            for x in patches:
+                x.stop()
+
+    def test_optional_failures_are_recorded(self):
+        from lanmap import snapshot
+        snap = self.run_scan(upnp=True)
+        meta = read_json(snap / "meta.json")
+        self.assertTrue(snapshot.finished(snap) and snapshot.verify(snap)["ok"])
+        self.assertIn("raw/smb.json", meta["manifest"])
+        by = {x["id"]: x for x in meta["passport"]}
+        self.assertEqual(by["smb"]["status"], "partial")
+        self.assertIn("опрошено 1 из 2", by["smb"]["detail"])
+        self.assertEqual(by["upnp"]["status"], "error")
+        self.assertFalse((snap / "raw" / "upnp.json").exists())  # проверки UPnP скажут «нечем проверить»
+        self.assertEqual(by["router"]["status"], "skipped")
+        self.assertEqual(by["igd"]["status"], "ok")
+        self.assertEqual(len(read_json(snap / "raw" / "smb.json")), 1)
+
+    def test_report_shows_passport(self):
+        from lanmap.build import build
+        from lanmap.report import _about
+        about = _about(build(self.run_scan(upnp=True)))
+        self.assertIn("UPnP-описания", about)
+        self.assertIn("Не все этапы среза прошли", about)
+        # Роутер без модуля уже сказан своей плашкой — в счёт неполноты второй раз не идёт
+        self.assertEqual(about.count("Данные роутера недоступны"), 1)
+        self.assertNotIn("Роутер (пропущен)", about)
+
+
 class DnsTest(unittest.TestCase):
     def test_roundtrip(self):
         name = dnswire.encode_name("cam._http._tcp.local")

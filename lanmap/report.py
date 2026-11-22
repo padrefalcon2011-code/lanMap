@@ -856,6 +856,14 @@ def _about(model: dict) -> str:
         warns.append((text[0].upper() + text[1:] + ".", False))
     for text in meta.get("warnings") or []:
         warns.append((text[0].upper() + text[1:] + ".", False))
+    passport = meta.get("passport") or []
+    # Роутер без модуля или без входа уже сказан своей плашкой — второй раз в счёт не идёт
+    gaps = [x for x in passport if x.get("status") != "ok"
+            and not (x.get("id") == "router" and x.get("status") == "skipped" and model.get("router_skipped"))]
+    if gaps:
+        warns.append(("Не все этапы среза прошли: " + ", ".join(
+            f'{snapshot_mod.STAGES.get(x["id"], x["id"])} ({snapshot_mod.PASS_NAMES.get(x["status"], x["status"])})'
+            for x in gaps) + ".", False))
     if not router and model.get("router_skipped"):
         warns.append((f'Данные роутера недоступны: {model["router_skipped"]}. Без них нет карты подключений и пробросов.', True))
     if not meta.get("admin"):
@@ -889,13 +897,21 @@ def _about(model: dict) -> str:
     rows = (f'<div class="sure" title="Опознаны с высокой уверенностью среди отвечавших">{ring}<span>Опознаны уверенно</span>'
             f'<b>{sure} из {len(alive)}</b></div>') + rows
     setup = f'<button class="sbtn live-only" data-setup>{icon("gear", "s")}Настроить</button>'
+    marks = {"ok": ("check", "good"), "partial": ("alert", "warn"), "skipped": ("minus", "skip"), "error": ("x", "crit")}
+    stages = "".join(
+        f'<div class="{marks.get(x.get("status"), ("question", ""))[1]}" '
+        f'title="{e(snapshot_mod.PASS_NAMES.get(x.get("status"), "?"))}">'
+        f'{icon(marks.get(x.get("status"), ("question", ""))[0], "s", snapshot_mod.PASS_NAMES.get(x.get("status")))}'
+        f'<span>{e(snapshot_mod.STAGES.get(x.get("id"), x.get("id") or "?"))}</span>'
+        f'<b>{e(x.get("detail") or snapshot_mod.PASS_NAMES.get(x.get("status"), ""))}</b></div>' for x in passport)
+    stages = f'<div class="ptitle">Что удалось проверить</div><div class="agrid pass">{stages}</div>' if stages else ""
     wl = "".join(f'<div class="awarn">{icon("alert", "s")}<span>{e(t)}</span>{setup if s else ""}</div>' for t, s in warns)
     short = " · ".join(x for x in (f'{router.get("model") or "роутер"} {router.get("firmware") or ""}'.strip() if router else "",
                                    f'портов {meta.get("ports_tested")}' if meta.get("ports_tested") else "") if x)
     flag = (f'<span class="pc warn">{icon("alert", "s")}проверка неполная · {len(warns)}</span>' if warns
             else f'<span class="pc good">{icon("check", "s")}полная</span>')
     return (f'<details class="about"><summary>{icon("info", "s")}О срезе{" · " + e(short) if short else ""} {flag}</summary>'
-            f'<div class="abody">{wl}<div class="agrid">{rows}</div>'
+            f'<div class="abody">{wl}<div class="agrid">{rows}</div>{stages}'
             f'<p class="muted">LanMap только читает сеть и ничего не меняет на устройствах.</p></div></details>')
 
 
