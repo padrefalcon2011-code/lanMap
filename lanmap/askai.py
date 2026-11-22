@@ -5,9 +5,13 @@
 по всему тексту: устройства — У1, У2… (по порядку, шлюз первым), сегменты роутера — сеть A, B…
 Адресов, MAC, имён и подписей в тексте нет совсем; MAC не хэшируется: хэш MAC подбирается перебором.
 
-Каждый блок берёт поля по белому списку. Свободный текст программы (подробности находок, описания
-UPnP-пробросов) чистится: известные адреса → метки, имена устройств → «<имя>», затем `anonymize()`.
-Не берутся никогда: подписи и имена устройств, реестр (кроме подтверждённых типа/модели), причины
+Каждый блок берёт поля по белому списку. Свободный текст программы (подробности находок) чистится:
+известные адреса → метки, имена устройств → «<имя>», затем `anonymize()`.
+
+Производитель, модель и прошивка — вывод LanMap без реестра (`share.verdict`): владелец мог вписать
+в подпись что угодно. Тип — из реестра можно: это значение из фиксированного списка, а не текст.
+Свободный текст от устройств и программ сети (описания UPnP-пробросов) — отдельным блоком `raw()`,
+страница добавляет его только по галочке. Не берутся никогда: подписи и имена устройств, причины
 статусов и заметки владельца, описания статических пробросов, имя компьютера, внешний IP.
 """
 from __future__ import annotations
@@ -22,6 +26,7 @@ from lanmap.anonymize import anonymize
 from lanmap.identify import LEVEL_NAMES
 from lanmap.share import clean_value as _v
 from lanmap.share import personal_names as _names
+from lanmap.share import verdict as _verdict
 
 INTRO = """Ниже — срез моей домашней сети, сделанный программой LanMap {version} ({date}). LanMap только смотрит \
 и ничего в сети не меняет. Данные обезличены: устройства обозначены У1, У2…, адреса, MAC-адреса, имена \
@@ -75,11 +80,13 @@ class _Labels:
 
 
 def _what(dev: dict) -> str:
-    """Тип, производитель, модель — без имён устройства (правило может взять модель из DHCP-имени)."""
+    """Тип (из фиксированного списка, можно с подписью владельца), производитель и модель — вывод LanMap
+    без реестра и без имён устройства (правило может взять модель из DHCP-имени)."""
     ident = dev.get("identity") or {}
+    own = _verdict(dev)
     names = _names(dev)
     parts = [ident.get("type_label") or "Неопознанное устройство"]
-    vendor, model = (ident.get(k) for k in ("vendor", "model"))
+    vendor, model = (own.get(k) for k in ("vendor", "model"))
     if vendor and model and str(model).lower().startswith(str(vendor).lower()):
         vendor = None  # «EPSON» + «EPSON L566 Series» → только модель
     for value in (vendor, model):
@@ -92,7 +99,7 @@ def _device_line(dev: dict, labels: _Labels) -> str:
     ident = dev.get("identity") or {}
     r = dev.get("router") or {}
     bits = [_what(dev)]
-    firmware = ident.get("firmware")
+    firmware = _verdict(dev).get("firmware")
     if firmware and not any(n in str(firmware).lower() for n in _names(dev)):
         bits.append(f"прошивка {_v(firmware)}")
     if dev.get("is_gateway"):
@@ -207,12 +214,22 @@ def _forwards(model: dict, labels: _Labels) -> list[str]:
     for f in fws:
         target = labels.by_ip.get(f.get("to_ip")) or "неизвестный адрес"
         kind = (f.get("kind") or "").upper()
-        line = (f"- {kind}: снаружи {(f.get('protocol') or '').upper()} {_v(f.get('port') or '?')} → "
-                f"{target}:{_v(f.get('to_port') or '?')}")
-        if f.get("kind") == "upnp" and f.get("description"):  # описание даёт программа; у статических — владелец
-            line += f", описание «{labels.clean(f['description'])}»"
-        lines.append(line)
+        lines.append(f"- {kind}: снаружи {(f.get('protocol') or '').upper()} {_v(f.get('port') or '?')} → "
+                     f"{target}:{_v(f.get('to_port') or '?')}")
     return lines
+
+
+def raw(model: dict) -> str:
+    """Сырые строки — только по галочке: описания UPnP-пробросов (их пишет программа на устройстве, бывает
+    с именем компьютера или человека). Описания статических пробросов пишет владелец — их нет и здесь."""
+    labels = _Labels(model)
+    lines = []
+    for f in fw_mod.merged(model):
+        if f.get("kind") == "upnp" and f.get("description"):
+            target = labels.by_ip.get(f.get("to_ip")) or "неизвестный адрес"
+            lines.append(f"- UPnP {(f.get('protocol') or '').upper()} {_v(f.get('port') or '?')} → {target}: "
+                         f"описание «{labels.clean(f['description'])}»")
+    return "## Сырые строки (описания UPnP-пробросов)\n" + "\n".join(lines) + "\n" if lines else ""
 
 
 def text(model: dict) -> str:

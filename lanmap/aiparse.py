@@ -112,9 +112,8 @@ PROMPT = f"""Помоги опознать устройство в моей до
 ```"""
 
 
-def prompt(dev: dict, with_names: bool = False) -> str:
-    p = share.payload(dev)
-    evidence = p["text"] + ("\n" + p["names"] if with_names and p["names"] else "")
+def prompt(dev: dict, with_names: bool = False, with_raw: bool = False) -> str:
+    evidence = share.evidence(share.payload(dev), with_names, with_raw)
     return PROMPT.replace("{evidence}", fence_safe(evidence))
 
 

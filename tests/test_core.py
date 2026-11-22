@@ -1741,10 +1741,17 @@ class ShareTest(unittest.TestCase):
         for s in self.SECRETS:
             self.assertNotIn(s.lower(), body.lower(), s)
         for s in ("LanMap ", "TestCorp", "X100", "Test Vendor", "80, 554", "_ipp._tcp", "ty=Printer X100",
-                  "lighttpd", "«Web UI»", "организация TestCorp", "Model=AB123_C45DE67-FG_8M", "Wi-Fi 5 ГГц",
-                  "TTL: 64", "Host '<ip>' denied"):
+                  "lighttpd", "Model=AB123_C45DE67-FG_8M", "Wi-Fi 5 ГГц", "TTL: 64"):
             self.assertIn(s, body)
         self.assertNotRegex(body, r"[\x00-\x08\x0b-\x1f�]")
+        # Свободный текст устройства — только в сырых строках (своя галочка), и там без секретов
+        for s in ("«Web UI»", "организация TestCorp", "Host '<ip>' denied"):
+            self.assertNotIn(s, body)
+            self.assertIn(s, p["raw"])
+        for s in self.SECRETS:
+            self.assertNotIn(s.lower(), p["raw"].lower(), s)
+        self.assertEqual(share.evidence(p), p["text"])
+        self.assertIn("«Web UI»", share.evidence(p, with_raw=True))
 
     def test_verdict_is_lanmap_own(self):
         """В заявку идёт догадка программы, не подпись владельца; модель из DHCP-имени — только под галочкой."""
@@ -1761,6 +1768,15 @@ class ShareTest(unittest.TestCase):
         self.assertIn("tplink-extender", p["text"])
         self.assertNotIn("Телевизор", p["lanmap"])
         self.assertIn("RE450-secret", p["names"])
+
+    def test_owner_label_always_personal(self):
+        """Подпись владельца личная, даже если совпала с самоописанием устройства; имя от устройства — нет."""
+        from lanmap import share
+        d = device(mdns_txt={"ty": "EPSON L566 Series"}, mdns_hosts=["EPSON.local"])
+        d["registry"] = {"name": "L566 Series", "confirmed": True}
+        names = share.personal_names(d)
+        self.assertIn("l566 series", names)
+        self.assertNotIn("epson", names)
 
     def test_names_opt_in(self):
         """Имя, которое устройство сообщает само (DHCP, mDNS), — отдельно, под галочкой; подпись владельца — никогда."""
@@ -1787,9 +1803,9 @@ class ShareTest(unittest.TestCase):
         m = re.search(r'data-share="([^"]*)"', page)
         self.assertIsNotNone(m)
         data = json.loads(html_mod.unescape(m.group(1)))
-        self.assertEqual(set(data), {"lanmap", "text", "names"})
+        self.assertEqual(set(data), {"lanmap", "text", "names", "raw"})
         for s in self.SECRETS:
-            self.assertNotIn(s.lower(), (data["lanmap"] + data["text"]).lower(), s)
+            self.assertNotIn(s.lower(), (data["lanmap"] + data["text"] + data["raw"]).lower(), s)
 
 
 class AskAiTest(unittest.TestCase):
@@ -1850,8 +1866,12 @@ class AskAiTest(unittest.TestCase):
         self.assertIsNone(re.search(r"\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}\b", text))
         self.assertIn("- У1 — Роутер", text)                      # шлюз первым
         self.assertIn("→ У2:80", text)                              # проброс на камеру…
-        self.assertIn("У2 (Камера TestCorp Z9): порт 23", text)      # …и находка на ней же — та же метка
-        self.assertIn("→ У3:5000, описание «<имя> У3»", text)       # имя и адрес в описании UPnP заменены
+        self.assertIn("У2 (Камера): порт 23", text)                  # …и находка на ней же — та же метка
+        # Производитель и модель — вывод LanMap без реестра: «TestCorp Z9» вписан в identity, как подпись владельца
+        self.assertNotIn("Z9", text)
+        # Описание UPnP-проброса — свободный текст: только в сырых строках (галочка), имя и адрес заменены
+        self.assertNotIn("описание", text)
+        self.assertIn("→ У3: описание «<имя> У3»", askai.raw(self.model()))
         self.assertIn("→ неизвестный адрес:9", text)
         self.assertIn("сеть A", text)
         self.assertIn("Помоги мне разобраться", text.split("##")[0])  # вступление — просьба к ИИ

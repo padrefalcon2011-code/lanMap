@@ -336,7 +336,7 @@ def cmd_ai(args) -> int:
     from lanmap import ops
     try:
         if args.action == "prompt":
-            print(ops.ai_prompt(args.target, args.names))
+            print(ops.ai_prompt(args.target, args.names, args.raw))
             return 0
         answer = Path(args.answer).read_text("utf-8") if args.answer else sys.stdin.read()
         if args.action == "check":
@@ -442,6 +442,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("action", choices=["prompt", "check", "apply"])
     p.add_argument("target", help="ключ, MAC или IP устройства из последнего среза")
     p.add_argument("--names", action="store_true", help="добавить в промт имя, которое устройство сообщает сети")
+    p.add_argument("--raw", action="store_true",
+                   help="добавить сырые строки устройства: заголовки страниц, баннеры (в них бывает имя или адрес)")
     p.add_argument("--answer", help="файл с ответом ИИ (без него — читается из стандартного ввода)")
     p.add_argument("--no-registry", action="store_true", help="не записывать тип и модель в реестр")
     p.add_argument("--no-rule", action="store_true", help="не сохранять правило")

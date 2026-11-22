@@ -407,9 +407,9 @@ def launch(target: str, action: str, ack: bool = False, **deps) -> dict:
 
 # --- «Разобрать с ИИ»: промт для ИИ владельца и приём ответа (lanmap/aiparse.py) --------------------
 
-def ai_prompt(target: str, with_names: bool = False) -> str:
+def ai_prompt(target: str, with_names: bool = False, with_raw: bool = False) -> str:
     from lanmap import aiparse
-    return aiparse.prompt(device(target), with_names)
+    return aiparse.prompt(device(target), with_names, with_raw)
 
 
 def ai_check(target: str, answer: str) -> dict:

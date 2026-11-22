@@ -10,15 +10,23 @@
 
 Имя, которое устройство само сообщает сети (DHCP, mDNS), — самая сильная улика для неопознанных
 и самое личное поле («iPhone-Masha»). Поэтому оно отдельной строкой: человек сам решает галочкой.
+
+Свободный текст устройства — заголовок веб-страницы, realm, организация в сертификате, баннеры портов,
+описание UPnP — тоже отдельно (`raw_lines`, своя галочка, по умолчанию выключена): шаблонная очистка
+ловит адреса и известные имена, но не любое имя, вписанное в заголовок. В основном тексте — только
+структурные поля: модель, производитель, версии ПО, номера портов, типы служб.
 """
 from __future__ import annotations
+
+import re
 
 from lanmap import __version__, identify, oui
 from lanmap.anonymize import anonymize
 
 TXT_KEYS = ("md", "model", "ty", "usb_mfg", "usb_mdl", "mfg", "mdl", "manufacturer", "vendor", "product",
             "platform", "am", "rpmd", "fv", "firmware", "osxvers")
-UPNP_KEYS = ("manufacturer", "modelName", "modelNumber", "modelDescription", "deviceType")
+UPNP_KEYS = ("manufacturer", "modelName", "modelNumber", "deviceType")
+UPNP_FREE = ("modelDescription",)  # свободный текст производителя — к сырым строкам
 ONVIF_KEYS = ("Manufacturer", "Model", "FirmwareVersion")
 MAX_VALUE = 160
 
@@ -44,20 +52,23 @@ def _self_described(f: dict) -> list[str]:
 def personal_names(dev: dict) -> set[str]:
     """Имена устройства и подписи владельца (в нижнем регистре): им не место в выводе LanMap.
 
-    Имя, которое целиком входит в самоописание устройства (принтер объявляет в mDNS «EPSON L566 Series»,
-    владелец подписал его «EPSON»), — это модель, а не личное имя: такие не считаются.
+    Имя, которое устройство сообщило о себе и которое целиком входит в его самоописание (принтер объявляет
+    в mDNS «EPSON L566 Series» и называет себя «EPSON»), — это модель, а не личное имя: такие не считаются.
+    Подписи владельца (реестр, подпись в роутере) личные всегда, даже если совпали с самоописанием.
     """
     f = dev.get("facts") or {}
     r = dev.get("router") or f.get("router") or {}
     reg = dev.get("registry") or {}
-    found = [r.get("label"), r.get("hostname"), (f.get("netbios") or {}).get("computer"),
-             (f.get("mdns_txt") or {}).get("fn"), *((f.get("upnp") or {}).get("friendlyName") or [])]
-    found += [h.removesuffix(".local") for h in f.get("mdns_hosts", [])]
-    found += list(f.get("mdns_instances", [])) + list(f.get("dns", [])) + list(f.get("router_names", []))
-    found += [reg.get(k) for k in ("name", "place", "owner", "purpose")]  # тип, модель и т. п. — не имена
-    names = {n.strip().lower() for n in found if isinstance(n, str) and len(n.strip()) >= 3}
+    reported = [r.get("hostname"), (f.get("netbios") or {}).get("computer"),
+                (f.get("mdns_txt") or {}).get("fn"), *((f.get("upnp") or {}).get("friendlyName") or [])]
+    reported += [h.removesuffix(".local") for h in f.get("mdns_hosts", [])]
+    reported += list(f.get("mdns_instances", [])) + list(f.get("dns", [])) + list(f.get("router_names", []))
+    owner = [r.get("label")] + [reg.get(k) for k in ("name", "place", "owner", "purpose")]  # тип, модель — не имена
+
+    def norm(items):
+        return {n.strip().lower() for n in items if isinstance(n, str) and len(n.strip()) >= 3}
     described = _self_described(f)
-    return {n for n in names if not any(n in d for d in described)}
+    return norm(owner) | {n for n in norm(reported) if not any(n in d for d in described)}
 
 
 def verdict(dev: dict) -> dict:
@@ -100,18 +111,10 @@ def text(dev: dict, ident: dict | None = None) -> str:
     if f.get("ports"):
         lines.append("- открытые TCP-порты: " + ", ".join(map(_v, f["ports"])))
     for h in f.get("http", []):
-        parts = [f"Server: {_v(h['server'])}" if h.get("server") else "",
-                 f"заголовок «{_v(h['title'])}»" if h.get("title") else "",
-                 f"realm «{_v(h['realm'])}»" if h.get("realm") else ""]
         lines.append(f"- HTTP{'S' if h.get('tls') else ''} {_v(h.get('port'))}: {_v(h.get('status') or '')}"
-                     + "".join(", " + p for p in parts if p))
-    for c in f.get("tls", []):
-        org = (c.get("subject") or {}).get("organizationName")
-        if org:
-            lines.append(f"- сертификат TLS на порту {_v(c.get('port'))}: организация {_v(org)}")
+                     + (f", Server: {_v(h['server'])}" if h.get("server") else ""))
     lines += [f"- SSH: {_v(s)}" for s in f.get("ssh", [])]
     lines += [f"- RTSP: {_v(s)}" for s in f.get("rtsp", [])]
-    lines += [f"- порт {_v(b.get('port'))} представился: {_v(b.get('text'))}" for b in f.get("banners", [])]
     if f.get("mdns_services"):
         lines.append("- mDNS-службы: " + ", ".join(map(_v, f["mdns_services"])))
     txt = {k: v for k, v in (f.get("mdns_txt") or {}).items() if k in TXT_KEYS and v}
@@ -139,6 +142,31 @@ def text(dev: dict, ident: dict | None = None) -> str:
     return anonymize("\n".join(lines))
 
 
+def raw_lines(dev: dict) -> str:
+    """Свободный текст, который устройство отдаёт о себе: заголовки страниц, realm, организация в сертификате,
+    баннеры портов, описание UPnP. Хорошая улика, но в нём бывает имя или адрес, — только по галочке."""
+    f = dev.get("facts") or {}
+    lines = []
+    for h in f.get("http", []):
+        if h.get("title"):
+            lines.append(f"- HTTP{'S' if h.get('tls') else ''} {_v(h.get('port'))}: заголовок «{_v(h['title'])}»")
+        if h.get("realm"):
+            lines.append(f"- HTTP{'S' if h.get('tls') else ''} {_v(h.get('port'))}: realm «{_v(h['realm'])}»")
+    for c in f.get("tls", []):
+        org = (c.get("subject") or {}).get("organizationName")
+        if org:
+            lines.append(f"- сертификат TLS на порту {_v(c.get('port'))}: организация {_v(org)}")
+    lines += [f"- порт {_v(b.get('port'))} представился: {_v(b.get('text'))}" for b in f.get("banners", [])]
+    u = f.get("upnp") or {}
+    lines += [f"- UPnP {k}: {_v(u[k][0])}" for k in UPNP_FREE if u.get(k)]
+    if not lines:
+        return ""
+    text = "\n".join(lines)
+    for name in sorted(personal_names(dev), key=len, reverse=True):  # известные имена — даже в сырых строках
+        text = re.sub(re.escape(name), "<имя>", text, flags=re.I)
+    return anonymize("- сырые строки устройства:\n" + text)
+
+
 def names_line(dev: dict) -> str:
     """Имена, которые устройство само сообщило сети (DHCP, mDNS). Пусто, если их нет. Подписи владельца — никогда."""
     f = dev.get("facts") or {}
@@ -151,4 +179,10 @@ def names_line(dev: dict) -> str:
 def payload(dev: dict) -> dict:
     """Данные для кнопки «Помочь опознать» в карточке устройства (атрибут data-share)."""
     ident = verdict(dev)
-    return {"lanmap": summary(ident), "text": text(dev, ident), "names": names_line(dev)}
+    return {"lanmap": summary(ident), "text": text(dev, ident), "names": names_line(dev), "raw": raw_lines(dev)}
+
+
+def evidence(p: dict, with_names: bool = False, with_raw: bool = False) -> str:
+    """Улики из payload: основной текст и, по галочкам, сырые строки и имя. Так же собирает страница."""
+    return p["text"] + ("\n" + p["raw"] if with_raw and p.get("raw") else "") + (
+        "\n" + p["names"] if with_names and p.get("names") else "")

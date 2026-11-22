@@ -626,6 +626,8 @@ $$('[data-copy]').forEach(b=>b.addEventListener('click',async e=>{e.stopPropagat
 // «Помочь опознать»: обезличенный текст собран при сборке отчёта (lanmap/share.py), работает и без сервера
 const NEW_ISSUE='https://github.com/padrefalcon2011-code/lanMap/issues/new';
 let shdlg=null;
+// улики по галочкам — как share.evidence: основной текст, сырые строки устройства, имя
+const evid=(d,cb,cr)=>d.text+(cr&&cr.checked&&d.raw?'\n'+d.raw:'')+(cb&&cb.checked&&d.names?'\n'+d.names:'');
 function shareOpen(d,title){
  const sico=n=>`<svg class="i s" aria-hidden="true"><use href="#i-${n}"/></svg>`;
  const sesc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -635,20 +637,22 @@ function shareOpen(d,title){
  <div class="setup"><section class="sx"><div class="sxhead"><b>${sesc(title)}</b><span class="sxst">${sesc(d.lanmap)}</span></div>
   <p>Знаешь, что это за устройство? Отправь заявку: LanMap научится его узнавать — у тебя и у других.
    IP, MAC, подписи, имена сетей и серийные номера сюда не попадают. Проверь текст перед отправкой.</p>
+  ${d.raw?`<label class="shname"><input type="checkbox" data-raw> Добавить сырые строки устройства
+   <span class="muted">— заголовки страниц и баннеры: хорошая улика, но в них бывает имя или адрес</span></label>`:''}
   ${d.names?`<label class="shname"><input type="checkbox" data-names> Добавить имя, которое устройство сообщает сети
    <span class="muted">— часто это лучшая улика, но в нём бывает имя человека</span></label>`:''}
   <textarea data-text></textarea>
   <div class="lv"><button class="sbtn" data-shcopy>${sico('copy')}<span>Копировать</span></button>
    <a class="sbtn" data-issue target="_blank" rel="noopener noreferrer">${sico('open')}<span>Открыть заявку на GitHub</span></a></div>
   <p class="shhint muted"></p></section></div>`;
- const ta=$('[data-text]',shdlg),cb=$('[data-names]',shdlg),a=$('[data-issue]',shdlg),hint=$('.shhint',shdlg);
- const build=()=>{ta.value=d.text+(cb&&cb.checked?'\n'+d.names:'');link();};
+ const ta=$('[data-text]',shdlg),cb=$('[data-names]',shdlg),cr=$('[data-raw]',shdlg),a=$('[data-issue]',shdlg),hint=$('.shhint',shdlg);
+ const build=()=>{ta.value=evid(d,cb,cr);link();};
  const link=()=>{const q=new URLSearchParams({template:'device-identification.yml',lanmap:d.lanmap,evidence:ta.value});
   const url=NEW_ISSUE+'?'+q.toString(),long=url.length>7500;
   a.href=long?NEW_ISSUE+'?'+new URLSearchParams({template:'device-identification.yml',lanmap:d.lanmap}):url;
   hint.textContent=long?'Текст длинный для ссылки: скопируй его и вставь в поле «Улики» в заявке.'
    :'Заявка откроется с уже заполненными уликами. Останется написать, что это на самом деле.';};
- build();ta.addEventListener('input',link);if(cb)cb.addEventListener('change',build);
+ build();ta.addEventListener('input',link);[cb,cr].forEach(x=>x&&x.addEventListener('change',build));
  $('[data-close]',shdlg).addEventListener('click',()=>shdlg.close());
  $('[data-shcopy]',shdlg).addEventListener('click',async ev=>{const l=$('span',ev.currentTarget);
   try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}
@@ -670,6 +674,8 @@ function aiOpen(b){
  <div class="setup"><section class="sx"><div class="sxhead"><b>${sesc(n?n.textContent:'')}</b><span class="sxst">${sesc(d.lanmap)}</span></div>
   <p><b>1. Скопируй промт в свой ИИ</b> — хватит обычного чата: ChatGPT, Claude, GigaChat, DeepSeek. Агенту с доступом
    к компьютеру лучше не давать: в уликах строки, которые прислали устройства сети. IP, MAC, подписей и имён в тексте нет — проверь перед отправкой.</p>
+  ${d.raw?`<label class="shname"><input type="checkbox" data-raw> Добавить сырые строки устройства
+   <span class="muted">— заголовки страниц и баннеры: хорошая улика, но в них бывает имя или адрес</span></label>`:''}
   ${d.names?`<label class="shname"><input type="checkbox" data-names> Добавить имя, которое устройство сообщает сети
    <span class="muted">— часто это лучшая улика, но в нём бывает имя человека</span></label>`:''}
   <textarea data-text></textarea>
@@ -679,10 +685,10 @@ function aiOpen(b){
   <div class="lv"><button class="sbtn" data-aicheck>${sico('check')}<span>Проверить ответ</span></button></div>
   <div class="aires"></div>`:`<p class="muted">Ответ ИИ можно вставить обратно в веб-интерфейсе (python -m lanmap serve): тип и модель уйдут в реестр, правило — в базу опознания.</p>`}
  </section></div>`;
- const ta=$('[data-text]',shdlg),cb=$('[data-names]',shdlg);
+ const ta=$('[data-text]',shdlg),cb=$('[data-names]',shdlg),cr=$('[data-raw]',shdlg);
  // замена функцией: «$&» в уликах — не шаблон; «===» → «==», как aiparse.fence_safe: ограду улик не закрыть
- const build=()=>{ta.value=tpl.replace('{evidence}',()=>(d.text+(cb&&cb.checked?'\n'+d.names:'')).replace(/={3,}/g,'=='));};
- build();if(cb)cb.addEventListener('change',build);
+ const build=()=>{ta.value=tpl.replace('{evidence}',()=>evid(d,cb,cr).replace(/={3,}/g,'=='));};
+ build();[cb,cr].forEach(x=>x&&x.addEventListener('change',build));
  $('[data-close]',shdlg).addEventListener('click',()=>shdlg.close());
  $('[data-shcopy]',shdlg).addEventListener('click',async ev=>{const l=$('span',ev.currentTarget);
   try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}
@@ -719,6 +725,7 @@ $$('[data-ai]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();ai
 // «Спросить ИИ»: обезличенный текст всего отчёта (lanmap/askai.py), только копирование — никуда не отправляется
 const askBtn=$('#askai');
 if(askBtn)askBtn.addEventListener('click',()=>{
+ const ad=JSON.parse(askBtn.dataset.askai);
  const sico=n=>`<svg class="i s" aria-hidden="true"><use href="#i-${n}"/></svg>`;
  if(!shdlg){shdlg=document.createElement('dialog');shdlg.className='setupdlg';document.body.appendChild(shdlg);
   shdlg.addEventListener('click',e=>{if(e.target===shdlg)shdlg.close();});}
@@ -728,11 +735,15 @@ if(askBtn)askBtn.addEventListener('click',()=>{
    опасно на самом деле, что чинить первым и как — по шагам для твоих моделей.</p>
   <p>Адреса, MAC, имена и подписи заменены метками У1, У2… — ИИ видит устройства и связи между ними, но не твою сеть.
    Пробегись глазами перед отправкой. Это список слабых мест сети: для чата с ИИ годится, а на открытый форум — лучше после исправления.</p>
+  ${ad.raw?`<label class="shname"><input type="checkbox" data-raw> Добавить сырые строки
+   <span class="muted">— описания UPnP-пробросов от программ на устройствах: бывает имя компьютера или человека</span></label>`:''}
   <textarea data-text></textarea>
   <div class="lv"><button class="sbtn save" data-shcopy>${sico('copy')}<span>Копировать</span></button>
    <span class="muted" data-size></span></div></section></div>`;
- const ta=$('[data-text]',shdlg);ta.value=JSON.parse(askBtn.dataset.askai).text;
- $('[data-size]',shdlg).textContent=`${ta.value.split('\n').length} строк`;
+ const ta=$('[data-text]',shdlg),cr=$('[data-raw]',shdlg);
+ const build=()=>{ta.value=ad.text+(cr&&cr.checked?'\n'+ad.raw:'');
+  $('[data-size]',shdlg).textContent=`${ta.value.split('\n').length} строк`;};
+ build();if(cr)cr.addEventListener('change',build);
  $('[data-close]',shdlg).addEventListener('click',()=>shdlg.close());
  $('[data-shcopy]',shdlg).addEventListener('click',async ev=>{const l=$('span',ev.currentTarget);
   try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}
