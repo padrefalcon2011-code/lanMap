@@ -106,8 +106,39 @@ def problems(check: dict) -> list[str]:
     return out
 
 
-def same_network(a: dict, b: dict) -> bool:
-    """Срезы одной сети (по meta.interface.network). Неизвестная сеть у одного из них — не повод отказать."""
-    na = (a.get("interface") or {}).get("network")
-    nb = (b.get("interface") or {}).get("network")
-    return not na or not nb or na == nb
+def network_id(snap: Path, m: dict | None = None) -> dict:
+    """Чья это сеть: подсеть и MAC шлюза (по ARP или таблице соседей среза).
+
+    Одной подсети мало: дома и на даче подсеть часто одинаковая (заводская у роутеров) — различает роутер."""
+    snap = Path(snap)
+    m = meta(snap) if m is None else m
+    iface = m.get("interface") or {}
+    gw, mac = iface.get("gateway"), None
+    for name in ("arp.json", "neighbors.json"):
+        if mac or not gw:
+            break
+        try:
+            rows = read_json(snap / "raw" / name, []) or []
+        except ValueError:
+            rows = []
+        mac = next((r.get("mac") for r in rows if isinstance(r, dict) and r.get("ip") == gw and r.get("mac")), None)
+    return {"network": iface.get("network"), "gateway_mac": mac.upper().replace("-", ":") if mac else None}
+
+
+def model_network_id(model: dict) -> dict:
+    """То же для собранной модели (devices.json): MAC шлюза — у устройства is_gateway."""
+    gw = next((d for d in model.get("devices") or [] if d.get("is_gateway")), None)
+    mac = (gw or {}).get("mac")
+    return {"network": ((model.get("meta") or {}).get("interface") or {}).get("network"),
+            "gateway_mac": mac.upper() if mac else None}
+
+
+def network_diff(a: dict, b: dict) -> str | None:
+    """Чем различаются сети (network_id) → пояснение или None, если это та же сеть.
+
+    Неизвестное с одной стороны — не повод отказать: старые срезы и сети без шлюза."""
+    if a.get("network") and b.get("network") and a["network"] != b["network"]:
+        return f'другая подсеть: {a["network"]} и {b["network"]}'
+    if a.get("gateway_mac") and b.get("gateway_mac") and a["gateway_mac"] != b["gateway_mac"]:
+        return f'другой роутер (MAC шлюза {a["gateway_mac"]} и {b["gateway_mac"]})'
+    return None

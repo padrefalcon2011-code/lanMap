@@ -560,6 +560,30 @@ class ChangesTest(unittest.TestCase):
         self.assertIsNone(changes.previous_snapshot(snap))
         self.assertLess(snapshot.order_key(base / "2026-01-01_100000_2"), snapshot.order_key(base / "2026-01-01_100000_10"))
 
+    def test_other_router_same_subnet(self):
+        """Та же подсеть, но другой роутер (дом и дача) — не база; ручное сравнение помечается явно."""
+        from lanmap import changes, snapshot
+        from lanmap.report import _changes
+        base = Path(tempfile.mkdtemp(dir=TMP.name))
+        iface = {"interface": {"network": "192.0.2.0/24", "gateway": "192.0.2.1"}}
+        home = finish_snapshot(base / "2026-01-01_100000", **iface)
+        write_json(home / "raw" / "arp.json", [{"ip": "192.0.2.1", "mac": MAC_A}])
+        dacha = finish_snapshot(base / "2026-01-02_100000", **iface)
+        write_json(dacha / "raw" / "neighbors.json", [{"ip": "192.0.2.1", "mac": MAC_B.lower()}])
+        now = finish_snapshot(base / "2026-01-03_100000", **iface)
+        write_json(now / "raw" / "arp.json", [{"ip": "192.0.2.1", "mac": MAC_A}])
+        self.assertEqual(snapshot.network_id(dacha)["gateway_mac"], MAC_B)
+        self.assertEqual(changes.previous_snapshot(now), home)
+        old = model([mdev(MAC_A, ["192.0.2.1"])])
+        old["devices"][0]["is_gateway"] = True
+        new = model([mdev(MAC_B, ["192.0.2.1"])])
+        new["devices"][0]["is_gateway"] = True
+        c = self.cmp(old, new)
+        self.assertIn("другой роутер", c["other_network"])
+        self.assertIn("ВНИМАНИЕ", changes.summary(c))
+        self.assertIn("другая сеть", _changes({**new, "changes": c}))
+        self.assertIsNone(self.cmp(old, old)["other_network"])
+
     def test_latest_ignores_rebuilt_interrupted(self):
         """Прерванный срез, пересобранный вручную (devices.json есть, finished нет), не считается последним."""
         from unittest import mock

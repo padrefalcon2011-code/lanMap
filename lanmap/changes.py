@@ -31,12 +31,13 @@ def previous_snapshot(snapshot: Path) -> Path | None:
     if not parent.is_dir():
         return None
     me = snap_mod.order_key(snapshot)
-    mine = snap_mod.meta(snapshot)
+    mine = snap_mod.network_id(snapshot)
     older = sorted((p for p in parent.iterdir() if p.is_dir() and snap_mod.is_snapshot_name(p.name)
                     and snap_mod.order_key(p) < me), key=snap_mod.order_key, reverse=True)
     for p in older:
         m = snap_mod.meta(p)
-        if snap_mod.finished(p, m) and snap_mod.same_network(mine, m) and snap_mod.verify(p)["ok"]:
+        if (snap_mod.finished(p, m) and not snap_mod.network_diff(mine, snap_mod.network_id(p, m))
+                and snap_mod.verify(p)["ok"]):
             return p
     return None
 
@@ -217,9 +218,12 @@ def compare(old: dict, new: dict, tested_old: set[int] | None = None, tested_new
     old_router, new_router = old.get("router"), new.get("router")
     pairs, gone_raw, new_raw = match(old["devices"], new["devices"])
 
+    from lanmap import snapshot as snap_mod
     result: dict = {
         "baseline": old.get("snapshot"),
         "baseline_started": (old.get("meta") or {}).get("started"),
+        # Сравнили срезы разных сетей (только вручную: build --compare) — совпадения устройств условны
+        "other_network": snap_mod.network_diff(snap_mod.model_network_id(old), snap_mod.model_network_id(new)),
         "new": [], "gone": [], "online": [], "offline": [], "changed": [],
         "private": {"new": 0, "gone": 0},
         "first_seen_router": {"devices": 0, "forwards": 0},
@@ -316,4 +320,5 @@ def summary(changes: dict) -> str:
     cl = changes.get("checklist")
     if cl and cl["old"] != cl["new"]:
         parts.append(f'порядок в сети {cl["old"]} → {cl["new"]}')
-    return f'С прошлого среза ({changes["baseline"]}): ' + ", ".join(parts)
+    other = f' ВНИМАНИЕ: срезы разных сетей — {changes["other_network"]}.' if changes.get("other_network") else ""
+    return f'С прошлого среза ({changes["baseline"]}): ' + ", ".join(parts) + other

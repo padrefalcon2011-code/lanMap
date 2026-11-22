@@ -511,9 +511,14 @@ def _changes(model: dict) -> str:
     if cl and cl["old"] != cl["new"]:
         counters += (f'<span class="cnt {"add" if cl["new"] > cl["old"] else "crit"}" title="Порядок в сети: было '
                      f'{cl["old"]}, стало {cl["new"]}">{icon("check", "s")}{cl["old"]}{icon("arrow", "s")}{cl["new"]}</span>')
-    head = (f'<summary><h2>{icon("delta")}Изменения</h2><span class="muted">с {e(when)}</span>'
+    other = (f'<span class="pc warn" title="{e(c["other_network"])}">{icon("alert", "s")}другая сеть</span>'
+             if c.get("other_network") else "")
+    head = (f'<summary><h2>{icon("delta")}Изменения</h2><span class="muted">с {e(when)}</span>{other}'
             f'<span class="counters">{counters}</span>{icon("chevron", "chev")}</summary>')
     notes = "".join(f'<div class="note">{icon("info", "s")}<span>{e(n)}</span></div>' for n in c.get("notes") or [])
+    if c.get("other_network"):
+        notes = (f'<div class="awarn">{icon("alert", "s")}<span>Сравнение со срезом другой сети — '
+                 f'{e(c["other_network"])}. Совпадения устройств и «изменения» здесь условны.</span></div>') + notes
     if not c.get("total"):
         return (f'<details class="panel" id="changes">{head}<div class="panel-body">'
                 f'<div class="note">{icon("check", "s")}Ничего заметного не изменилось.</div>{notes}</div></details>')
