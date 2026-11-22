@@ -450,6 +450,42 @@ def model(devs, router=None, name="2026-01-01_000000"):
     return {"snapshot": name, "meta": {"started": "2026-01-01T00:00:00"}, "router": router, "devices": devs}
 
 
+class RouterCompletenessTest(unittest.TestCase):
+    """Модуль роутера сам объявляет, какие пробросы читает: молчание не значит «пробросов нет»."""
+
+    def test_unknown_kind_and_declared_forwards(self):
+        from unittest import mock
+        from lanmap import forwards, routers
+
+        class Partial:  # модуль, который умеет только UPnP и забыл про forward_kinds
+            FORWARD_KINDS = ("upnp",)
+
+            @staticmethod
+            def is_partial(host):
+                return "P1"
+
+            @staticmethod
+            def normalize(raw):
+                return {"kind": "partial", "forwards": [], "forward_kinds": ["upnp", "static"]}
+
+        self.assertIsNone(routers.normalize({"kind": "brand-from-the-future", "data": {}}))
+        with mock.patch.dict(routers.MODULES, {"partial": Partial}, clear=True):
+            self.assertEqual(routers.detect("192.0.2.1"), ("partial", "P1"))
+            r = routers.normalize({"kind": "partial"})
+        self.assertEqual(r["forward_kinds"], ["upnp"])  # про статические модуль сказать не может
+        self.assertEqual(forwards.known_kinds({"router": r}), {"upnp"})
+        self.assertEqual(forwards.known_kinds({"router": {"forwards": []}}), set())
+
+    def test_static_check_unknown_without_declaration(self):
+        from lanmap import security
+        snap = SecurityTest.snap(SecurityTest())
+        m = SecurityTest.net(SecurityTest(), router={"forwards": []})
+        sec = security.evaluate(m, snap, SecurityTest.TESTED, {})
+        self.assertIn("STATIC_PORT_FORWARD", sec["skipped"])
+        m = SecurityTest.net(SecurityTest(), router={"forward_kinds": ["upnp", "static"], "forwards": []})
+        self.assertNotIn("STATIC_PORT_FORWARD", security.evaluate(m, snap, SecurityTest.TESTED, {})["skipped"])
+
+
 class ChangesTest(unittest.TestCase):
     TESTED = {22, 23, 80, 443}
 
@@ -495,13 +531,13 @@ class ChangesTest(unittest.TestCase):
         fw = {"kind": "upnp", "protocol": "tcp", "port": 5000, "to_ip": "192.0.2.10", "to_port": 5000}
         old = model([mdev(MAC_B, ["192.0.2.10"])])
         new = model([mdev(MAC_B, ["192.0.2.10"]), mdev(MAC_C, ["192.0.2.12"], alive=False, router_only=True)],
-                    router={"forwards": [fw], "firmware": "1"})
+                    router={"forward_kinds": ["upnp", "static"], "forwards": [fw], "firmware": "1"})
         c = self.cmp(old, new)
         self.assertEqual(c["new"], [])
         self.assertEqual(c["forwards_added"], [])
         self.assertEqual(c["first_seen_router"], {"devices": 1, "forwards": 1})
         # А с данными роутера в обоих срезах новый проброс виден
-        old2 = model(old["devices"], router={"forwards": [], "firmware": "1"})
+        old2 = model(old["devices"], router={"forward_kinds": ["upnp", "static"], "forwards": [], "firmware": "1"})
         self.assertEqual(len(self.cmp(old2, new)["forwards_added"]), 1)
 
     def test_private_macs_counted_not_listed(self):
@@ -616,8 +652,8 @@ class ChangesTest(unittest.TestCase):
         cam = rdev(MAC_B, "192.0.2.10", "camera", ports=[23, 80],
                    router={"active": True, "link": "wifi", "rssi": -75, "band": "2.4 ГГц"})
         off = rdev(MAC_C, "192.0.2.12", "phone", alive=False, router={"active": False})
-        base = model([mdev(MAC_B, ["192.0.2.11"], ports=[80])], router={"forwards": [], "firmware": "1"})
-        full = model([cam, off], router={"forwards": [fw], "firmware": "1", "clients": [], "model": "R"})
+        base = model([mdev(MAC_B, ["192.0.2.11"], ports=[80])], router={"forward_kinds": ["upnp", "static"], "forwards": [], "firmware": "1"})
+        full = model([cam, off], router={"forward_kinds": ["upnp", "static"], "forwards": [fw], "firmware": "1", "clients": [], "model": "R"})
         full["changes"] = self.cmp(base, full)
         full["meta"].update(admin=True, interface={"network": NET})
         from lanmap import security
@@ -664,7 +700,7 @@ class MapTest(unittest.TestCase):
         guest = self.dev(20, {"segment": "Guest", "link": "wifi", "band": "5 ГГц", "active": True})
         devs = [self.dev(1, gateway=True), *wired, guest, self.dev(30), self.dev(40, alive=False)]
         fw = {"kind": "upnp", "protocol": "tcp", "port": 8080, "to_ip": "192.0.2.10", "to_port": 80}
-        page = render(model(devs, router={"forwards": [fw], "clients": []}))
+        page = render(model(devs, router={"forward_kinds": ["upnp", "static"], "forwards": [fw], "clients": []}))
         self.assertIn('<main data-map="1">', page)
         self.assertIn('data-view="map"', page)
         for slot in ("gw", "seg|Home|wired|6", "seg|Guest|wifi|5 ГГц", "scan", "off"):
@@ -737,7 +773,7 @@ class SecurityTest(unittest.TestCase):
 
     def test_upnp_needs_router(self):
         fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
-        sec = self.run_checks(self.net(router={"forwards": [fw, {**fw, "kind": "static"}]}))
+        sec = self.run_checks(self.net(router={"forward_kinds": ["upnp", "static"], "forwards": [fw, {**fw, "kind": "static"}]}))
         upnp = [f for f in sec["findings"] if f["id"] == "UPNP_PORT_MAPPINGS"]
         self.assertEqual(len(upnp), 1)
         self.assertEqual(upnp[0]["key"], "00:00:5E:00:53:0D")
@@ -763,7 +799,7 @@ class SecurityTest(unittest.TestCase):
         import re as _re
         from lanmap import report
         fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
-        m = self.net(router={"forwards": [fw, {**fw, "port": 50001, "to_ip": "192.0.2.10", "to_port": 80}]})
+        m = self.net(router={"forward_kinds": ["upnp", "static"], "forwards": [fw, {**fw, "port": 50001, "to_ip": "192.0.2.10", "to_port": 80}]})
         self.run_checks(m)
         html_ = report._security(m)
         card = _re.search(r'<article[^>]*id="sec-UPNP_PORT_MAPPINGS".*?</article>', html_, _re.S).group(0)
@@ -920,7 +956,7 @@ class ChecklistTest(unittest.TestCase):
 
     def test_findings_based(self):
         from lanmap import security
-        m = self.net(router={"forwards": [], "reservations": []})
+        m = self.net(router={"forward_kinds": ["upnp", "static"], "forwards": [], "reservations": []})
         m["devices"][0]["services"] = [{"port": 23, "name": None}]
         m["security"] = security.evaluate(m, SecurityTest().snap(), {23}, {})
         c = self.items(m)
@@ -935,7 +971,7 @@ class ChecklistTest(unittest.TestCase):
     def test_static_forward_is_e2(self):
         from lanmap import security
         fw = {"kind": "static", "protocol": "udp", "port": 51820, "to_ip": "192.0.2.20", "to_port": 51820}
-        m = self.net(router={"forwards": [fw], "reservations": []})
+        m = self.net(router={"forward_kinds": ["upnp", "static"], "forwards": [fw], "reservations": []})
         m["security"] = security.evaluate(m, SecurityTest().snap(), set(), {})
         self.assertEqual([f["id"] for f in m["security"]["findings"]], ["STATIC_PORT_FORWARD"])
         self.assertEqual(self.items(m)["E2"]["status"], "fail")
@@ -944,7 +980,7 @@ class ChecklistTest(unittest.TestCase):
         self.assertEqual(self.items(m)["E2"]["status"], "ok")
 
     def test_e3_segments_and_e9_reservations(self):
-        m = self.net(router={"forwards": [], "reservations": [{"mac": "00:00:5e:00:53:0d", "ip": "192.0.2.20"}]})
+        m = self.net(router={"forward_kinds": ["upnp", "static"], "forwards": [], "reservations": [{"mac": "00:00:5e:00:53:0d", "ip": "192.0.2.20"}]})
         for d, seg in zip(m["devices"], ("Home", "Home", "Home", "Home")):
             d["router"] = {"segment": seg}
         c = self.items(m)
@@ -1141,7 +1177,7 @@ class IgdTest(unittest.TestCase):
         from lanmap import forwards
         fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": "5000"}
         _, m = self.igd_model([igd_entry(50000, "192.0.2.20", 5000), igd_entry(50002, "192.0.2.20", 22)],
-                              router={"forwards": [fw]})
+                              router={"forward_kinds": ["upnp", "static"], "forwards": [fw]})
         self.assertEqual(len(forwards.merged(m)), 2)
         self.assertEqual(forwards.merged(m)[0], fw)  # запись роутера главнее
 
@@ -1149,7 +1185,7 @@ class IgdTest(unittest.TestCase):
         from lanmap import changes
         upnp = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
         static = {"kind": "static", "protocol": "tcp", "port": 443, "to_ip": "192.0.2.20", "to_port": 443}
-        old = SecurityTest().net(router={"forwards": [upnp, static]})
+        old = SecurityTest().net(router={"forward_kinds": ["upnp", "static"], "forwards": [upnp, static]})
         _, new = self.igd_model([igd_entry(50000, "192.0.2.20", 5000), igd_entry(50003, "192.0.2.21", 80)])
         c = changes.compare(old, new)
         self.assertEqual(c["forwards_removed"], [])  # статический не «закрылся»: его просто не видно без роутера
@@ -1788,7 +1824,7 @@ class AskAiTest(unittest.TestCase):
                              "onvif": {"SerialNumber": "SN-SECRET"}})
         pc = self.mk("00:00:5E:00:53:21", "192.0.2.21", "computer", "pc-secret")
         m = model([gw, cam, pc], router={"kind": "keenetic", "model": "Test", "firmware": "5.0", "clients": [],
-                                         "reservations": [], "forwards": [
+                                         "reservations": [], "forward_kinds": ["upnp", "static"], "forwards": [
             {"kind": "static", "protocol": "tcp", "port": 8080, "to_ip": "192.0.2.20", "to_port": 80,
              "description": "static-desc-secret"},
             {"kind": "upnp", "protocol": "tcp", "port": 5000, "to_ip": "192.0.2.21", "to_port": 5000,
@@ -2035,14 +2071,14 @@ class RecheckTest(unittest.TestCase):
     def test_forwards_from_router(self):
         from lanmap import security
         fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
-        self.m["router"] = {"forwards": [fw]}
+        self.m["router"] = {"forward_kinds": ["upnp", "static"], "forwards": [fw]}
         self.m["security"] = security.evaluate(self.m, self.snap, SecurityTest.TESTED, {})
         f = self.finding("UPNP_PORT_MAPPINGS")
         from lanmap import recheck
         from unittest import mock
         with mock.patch("lanmap.routers.normalize", side_effect=lambda raw: raw):
-            still = recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, FakeProbes(router={"forwards": [fw]}))
-            gone = recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, FakeProbes(router={"forwards": []}))
+            still = recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, FakeProbes(router={"forward_kinds": ["upnp", "static"], "forwards": [fw]}))
+            gone = recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, FakeProbes(router={"forward_kinds": ["upnp", "static"], "forwards": []}))
             unknown = recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, FakeProbes(router=None))
         self.assertEqual((still["result"], gone["result"], unknown["result"]), ("present", "gone", "unknown"))
 
@@ -2075,14 +2111,14 @@ class RecheckTest(unittest.TestCase):
         from lanmap import recheck, security
         from unittest import mock
         fw = {"kind": "upnp", "protocol": "tcp", "port": 50000, "to_ip": "192.0.2.20", "to_port": 5000}
-        self.m["router"] = {"forwards": [fw]}
+        self.m["router"] = {"forward_kinds": ["upnp", "static"], "forwards": [fw]}
         self.m["security"] = security.evaluate(self.m, self.snap, SecurityTest.TESTED, {})
         f = self.finding("UPNP_PORT_MAPPINGS")
         with mock.patch("lanmap.routers.normalize", side_effect=lambda raw: raw):
             partial = FakeProbes(router={"forwards": [], "errors": {"upnp_redirects": "HTTP 500"}})
             self.assertEqual(recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, partial)["result"],
                              "unknown")
-            other = FakeProbes({"192.0.2.1": MAC_C}, router={"forwards": []})  # у шлюза чужой MAC
+            other = FakeProbes({"192.0.2.1": MAC_C}, router={"forward_kinds": ["upnp", "static"], "forwards": []})  # у шлюза чужой MAC
             self.assertEqual(recheck.run("UPNP_PORT_MAPPINGS", f, self.m, self.snap, self.CTX, other)["result"],
                              "unknown")
         self.m["meta"]["interface"] = {"network": "198.51.100.0/24"}

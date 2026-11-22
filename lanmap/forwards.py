@@ -24,11 +24,12 @@ def merged(model: dict) -> list[dict]:
 
 
 def router_kinds(model: dict) -> set[str]:
-    """Виды пробросов, которые модуль роутера прочитал целиком. Упавшее чтение секции не даёт «чисто»."""
+    """Виды пробросов, которые модуль роутера прочитал целиком. Упавшее чтение секции не даёт «чисто»;
+    модуль, не объявивший вид, — тоже: молчание не значит «пробросов нет»."""
     router = model.get("router")
     if not router:
         return set()
-    return set(router.get("forward_kinds", ("upnp", "static")))
+    return set(router.get("forward_kinds") or ())
 
 
 def upnp_known(model: dict) -> bool:

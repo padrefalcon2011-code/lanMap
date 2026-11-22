@@ -12,9 +12,15 @@
                 "uptime_s", "first_seen_s_ago", "last_seen_s_ago", "access", "via",
                 "dhcp" (адрес получен этим MAC по DHCP; устройство за мостом аренды не имеет)}],
    "forwards": [{"kind" (upnp/static), "protocol", "port", "to_ip", "to_port", "description", "interface"}],
-   "forward_kinds": ["upnp", "static"] — виды пробросов, прочитанные целиком (чтение не упало); нет ключа — все,
+   "forward_kinds": ["upnp", "static"] — виды пробросов, прочитанные целиком (чтение не упало). Нет ключа или вида
+                    в нём — этот вид пробросов НЕ известен («нечем проверить», а не «чисто»),
    "reservations": [{"mac", "ip"}] — резервации DHCP (закреплённые адреса) или None, если модуль их не читает,
    "errors": {...}}
+
+Модуль объявляет:
+  is_<вид>(host) → модель или None (без пароля), collect(host), normalize(raw),
+  FORWARD_KINDS — какие виды пробросов он вообще умеет читать. normalize обрезает forward_kinds до них:
+  модуль, который статические пробросы не читает, не может сказать «статических нет».
 """
 from __future__ import annotations
 
@@ -25,10 +31,11 @@ MODULES = {"keenetic": keenetic}
 
 
 def detect(host: str) -> tuple[str, str] | None:
-    """(вид модуля, модель), если для роутера по адресу host есть модуль."""
-    product = keenetic.is_keenetic(host)
-    if product:
-        return "keenetic", product
+    """(вид модуля, модель), если для роутера по адресу host есть модуль. Спрашивает модули по очереди."""
+    for kind, module in MODULES.items():
+        product = getattr(module, f"is_{kind}")(host)
+        if product:
+            return kind, product
     return None
 
 
@@ -65,6 +72,13 @@ def presence(host: str):
 
 
 def normalize(raw: dict | None) -> dict | None:
+    """Сырые данные → общий формат. Срез роутера, модуля которого в этой версии нет, — None, а не падение."""
     if not raw or not raw.get("kind") or raw.get("skipped") or raw.get("errors", {}).get("login"):
         return None
-    return MODULES[raw["kind"]].normalize(raw)
+    module = MODULES.get(raw["kind"])
+    if module is None:
+        return None
+    out = module.normalize(raw)
+    can = set(getattr(module, "FORWARD_KINDS", ()))
+    out["forward_kinds"] = [k for k in out.get("forward_kinds") or [] if k in can]
+    return out

@@ -17,6 +17,7 @@ import urllib.request
 from lanmap import credentials
 
 USER_AGENT = "LanMap (read-only)"
+FORWARD_KINDS = ("upnp", "static")  # какие пробросы модуль умеет читать (routers.normalize)
 
 # Что читаем с роутера: имя в срезе → путь RCI. Всё — чтение (show/… и чтение конфигурации).
 READS = {
