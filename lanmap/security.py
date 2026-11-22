@@ -53,6 +53,10 @@ EFFECTIVE_NAMES = {**STATUSES, "fixed_pending": "отмечена исправл
 QUIET_STATUSES = {"accepted", "na", "fixed_verified"}
 # Итоги перепроверки (поле checked в data/findings.json)
 RECHECK_NAMES = {"present": "на месте", "gone": "исчезла", "unknown": "нечем проверить"}
+# Порт живого устройства молчит (файрвол с DROP или сбой): столько перепроверок подряд с паузой не меньше
+# SILENT_GAP минут — и молчание считается закрытием. Пауза — чтобы три щелчка подряд во время сбоя не закрыли находку
+SILENT_STREAK = 3
+SILENT_GAP = 5
 
 NAS_EXTRA_PORTS = {3306: "MySQL/MariaDB (база данных)", 2049: "NFS (общие папки без учётных записей)",
                    111: "RPC (служба для NFS)", 548: "AFP (общие папки для старых Mac)", 21: "FTP (пароль открытым текстом)"}
@@ -644,11 +648,13 @@ def _anchored(entry: dict, key: str, ips: list[str] | None) -> dict:
 
 
 def record_recheck(check_id: str, key: str, result: str, detail: str, ips: list[str] | None = None,
-                   replace: str | None = None) -> dict:
+                   replace: str | None = None, silent: bool = False, since: str | None = None) -> dict:
     """Итог перепроверки находки → data/findings.json.
 
     gone — находка исправлена, и это подтверждено (статус fixed). present при отметке «исправлена» — отметка
     снимается: находка на месте. «Принята осознанно» и «не применимо» перепроверка не трогает, только помнит итог.
+    silent — порт живого устройства промолчал: в checked копится серия (silent, silent_at), после SILENT_STREAK
+    перепроверок подряд итог становится gone. Любой другой итог и новый срез (since — его начало) серию сбрасывают.
     """
     if check_id not in BY_ID:
         raise ValueError(f"Нет такой проверки: {check_id}")
@@ -661,6 +667,9 @@ def record_recheck(check_id: str, key: str, result: str, detail: str, ips: list[
     old = old or items.get(u) or {}
     status = old.get("status", "open")
     at = now_iso()
+    streak = {}
+    if silent and result == "unknown":
+        streak, result, detail = _silent_streak(old.get("checked") or {}, at, since, detail)
     entry = {k: v for k, v in old.items() if k not in ("ips", "mac", "serial")}
     if result == "gone" and status not in ("accepted", "na"):
         entry.update(status="fixed", updated=at)
@@ -668,10 +677,35 @@ def record_recheck(check_id: str, key: str, result: str, detail: str, ips: list[
         entry["status"] = "open"
         entry.pop("updated", None)
     entry.setdefault("status", "open")
-    entry["checked"] = {"at": at, "result": result, "detail": detail}
+    entry["checked"] = {"at": at, "result": result, "detail": detail, **streak}
     items[u] = _anchored(entry, key, ips)
     write_json(statuses_path(), data)
     return items[u]
+
+
+def _silent_streak(prev: dict, at: str, since: str | None, detail: str) -> tuple[dict, str, str]:
+    """Серия молчаний порта → (поля для checked, итог, пояснение)."""
+    n, last = prev.get("silent") or 0, prev.get("silent_at")
+    if not last or (since and not _after(last, since)):
+        n, last = 0, None  # серии нет или она была до последнего среза
+    if last and _minutes(last, at) < SILENT_GAP:
+        return ({"silent": n, "silent_at": last}, "unknown",
+                f"{detail} ({n} из {SILENT_STREAK} — повтори не раньше чем через {SILENT_GAP} мин)")
+    n += 1
+    if n >= SILENT_STREAK:
+        return {}, "gone", f"порт молчит {n} перепроверки подряд, а устройство на связи — похоже, закрыт файрволом"
+    return {"silent": n, "silent_at": at}, "unknown", f"{detail} ({n} из {SILENT_STREAK} — повтори позже)"
+
+
+def _minutes(a: str, b: str) -> float:
+    """Минут от a до b (ISO-строки)."""
+    try:
+        da, db = datetime.fromisoformat(a), datetime.fromisoformat(b)
+        if (da.tzinfo is None) != (db.tzinfo is None):
+            da, db = da.replace(tzinfo=None), db.replace(tzinfo=None)
+        return (db - da).total_seconds() / 60
+    except ValueError:
+        return 0.0
 
 
 def _anchor_sets(key: str, ips=None) -> dict[str, set[str]]:

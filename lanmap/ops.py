@@ -126,12 +126,14 @@ def recheck(check: str, target: str, probes=None) -> list[dict]:
     ctx = ScanContext(local_ip=net.local_ip, network=net.network, gateway=net.gateway, if_index=net.if_index,
                       local_mac=net.mac)
     probes = probes or rc.Probes(ctx)
+    since = (model.get("meta") or {}).get("started")
     out = []
     for f in targets:
         res = rc.run(check, f, model, snap, ctx, probes)
-        security.record_recheck(check, f["key"], res["result"], res["detail"], ips=f.get("ips"),
-                                replace=f.get("status_uid"))
-        out.append({"finding": f, **res})
+        saved = security.record_recheck(check, f["key"], res["result"], res["detail"], ips=f.get("ips"),
+                                        replace=f.get("status_uid"), silent=bool(res.get("silent")), since=since)
+        # Итог — записанный: серия молчаний могла превратить unknown в gone
+        out.append({"finding": f, "result": saved["checked"]["result"], "detail": saved["checked"]["detail"]})
     return out
 
 

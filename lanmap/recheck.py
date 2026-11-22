@@ -5,6 +5,10 @@
 - gone — исчезла. Только если есть доказательство, что устройство на связи и по адресу то же
   устройство (ARP, ответ порта, ping): выключенная приставка не должна выглядеть исправленной;
 - unknown — нечем проверить (не ответило, адрес занял другой, нет входа в роутер).
+
+Порт: отказ (RST) — устройство на связи и порт закрыт, это gone сразу. Молчание порта у живого устройства —
+unknown с пометкой silent: так бывает и при сбое, и при файрволе с DROP. Серию молчаний считает
+security.record_recheck: после SILENT_STREAK перепроверок подряд (с паузой) молчание считается закрытием.
 """
 from __future__ import annotations
 
@@ -136,12 +140,17 @@ def run(check_id: str, finding: dict, model: dict, snapshot: Path, ctx: ScanCont
     windows = model.get("windows")
 
     # Дал ли опрос определённый ответ: без него отсутствие находки — не «исчезла», а «нечем проверить»
-    definite = True
+    definite, silent = True, False
     if check_id in PORTS:
         ports = PORTS[check_id]
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(ports)) as pool:
             states = dict(zip(ports, pool.map(lambda p: probes.tcp(ip, p), ports)))
         alive = alive or any(s != "silent" for s in states.values())
+        # Решают только порты самой находки (у хранилища — те, что были открыты): прочие могут молчать всегда
+        relevant = [p for p in finding.get("ports") or ([finding["port"]] if finding.get("port") else ports)
+                    if p in states] or ports
+        silent = any(states[p] == "silent" for p in relevant)
+        definite = not silent
         fresh["services"] = ([s for s in fresh.get("services") or [] if s["port"] not in states]
                              + [{"port": p} for p, s in states.items() if s == "open"])
         facts["mdns_services"] = []  # объявления mDNS заново не слушаем: решает порт
@@ -181,6 +190,10 @@ def run(check_id: str, finding: dict, model: dict, snapshot: Path, ctx: ScanCont
         return _out("present", hit["detail"])
     if not alive and not probes.ping(ip):
         return _out("unknown", "устройство не ответило — включено ли оно?")
+    if silent:
+        quiet = ", ".join(str(p) for p in relevant if states[p] == "silent")
+        return {**_out("unknown", f"устройство на связи, а порт {quiet} молчит — закрыт файрволом или сбой"),
+                "silent": True}
     if not definite:
         return _out("unknown", "устройство на связи, но не ответило на проверку — попробуй позже или сделай срез")
     return _out("gone", GONE[check_id])

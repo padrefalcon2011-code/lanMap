@@ -1640,7 +1640,59 @@ class RecheckTest(unittest.TestCase):
         self.assertEqual(self.run_rc("CAMERA_XM_PORT", FakeProbes())["result"], "unknown")
         # ARP молчит, но порт ответил отказом — устройство на связи
         self.assertEqual(self.run_rc("CAMERA_XM_PORT", FakeProbes({}, {34567: "closed"}))["result"], "gone")
-        self.assertEqual(self.run_rc("CAMERA_XM_PORT", FakeProbes({}, {}, ping=True))["result"], "gone")
+        # Ping отвечает, а порт молчит — это не закрытие (сбой или DROP): unknown с пометкой silent
+        res = self.run_rc("CAMERA_XM_PORT", FakeProbes({}, {}, ping=True))
+        self.assertEqual((res["result"], res.get("silent")), ("unknown", True))
+        res = self.run_rc("CAMERA_XM_PORT", FakeProbes(on_link))
+        self.assertEqual((res["result"], res.get("silent")), ("unknown", True))
+        # Выключенное устройство серию не копит
+        self.assertNotIn("silent", self.run_rc("CAMERA_XM_PORT", FakeProbes()))
+
+    def test_nas_only_own_ports_decide(self):
+        """У хранилища решают порты самой находки: остальные лишние могут молчать всегда (файрвол)."""
+        from lanmap import recheck
+        f = {"id": "NAS_EXTRA_SERVICES", "key": MAC_C, "ips": ["192.0.2.10"], "ports": [3306]}
+        dev = next(d for d in self.m["devices"] if d["key"] == MAC_C)
+        dev["identity"] = {**dev.get("identity", {}), "type": "nas"}
+        on_link = {"192.0.2.10": MAC_C}
+        res = recheck.run("NAS_EXTRA_SERVICES", f, self.m, self.snap, self.CTX, FakeProbes(on_link, {3306: "closed"}))
+        self.assertEqual(res["result"], "gone")
+        res = recheck.run("NAS_EXTRA_SERVICES", f, self.m, self.snap, self.CTX, FakeProbes(on_link, {2049: "closed"}))
+        self.assertEqual((res["result"], res.get("silent")), ("unknown", True))
+
+    def test_silent_streak(self):
+        """Порт молчит у живого устройства: gone только после серии перепроверок с паузой."""
+        from lanmap import ops, security
+        from unittest import mock
+        clock = iter(f"2030-01-01T10:{m:02d}:00" for m in (0, 1, 6, 12, 13, 20, 30))
+        snap_meta = {"started": "2030-01-01T09:00:00"}
+        self.m["meta"] = {**self.m.get("meta", {}), **snap_meta}
+        silent = FakeProbes({"192.0.2.10": MAC_C})
+        u = security.uid("CAMERA_XM_PORT", MAC_C)
+
+        def go(probes):
+            with mock.patch.object(security, "now_iso", lambda: next(clock)),                  mock.patch.object(ops, "latest", lambda: (self.snap, self.m)),                  mock.patch.object(ops, "pick_network", lambda: mock.Mock(
+                     local_ip=self.CTX.local_ip, network=self.CTX.network, gateway=self.CTX.gateway, if_index=1,
+                     mac=None)):
+                return ops.recheck("CAMERA_XM_PORT", "192.0.2.10", probes)[0]
+
+        self.assertEqual(go(silent)["result"], "unknown")                      # 10:00 — 1 из 3
+        r = go(silent)                                                         # 10:01 — рано, не считается
+        self.assertEqual((r["result"], security.load_statuses()[u]["checked"]["silent"]), ("unknown", 1))
+        self.assertIn("повтори не раньше", r["detail"])
+        self.assertEqual(go(silent)["result"], "unknown")                      # 10:06 — 2 из 3
+        r = go(silent)                                                         # 10:12 — 3 из 3
+        self.assertEqual(r["result"], "gone")
+        self.assertEqual(security.load_statuses()[u]["status"], "fixed")
+        # Порт открылся — находка на месте, серия сброшена
+        self.assertEqual(go(FakeProbes({"192.0.2.10": MAC_C}, {34567: "open"}))["result"], "present")  # 10:13
+        self.assertNotIn("silent", security.load_statuses()[u]["checked"])
+        self.assertEqual(go(silent)["result"], "unknown")                      # 10:20 — снова 1 из 3
+        self.assertEqual(security.load_statuses()[u]["checked"]["silent"], 1)
+        # Серия до нового среза не в счёт
+        self.m["meta"]["started"] = "2030-01-01T10:25:00"
+        go(silent)                                                             # 10:30
+        self.assertEqual(security.load_statuses()[u]["checked"]["silent"], 1)
 
     def test_address_taken_by_other(self):
         res = self.run_rc("CAMERA_XM_PORT", FakeProbes({"192.0.2.10": MAC_B}, {34567: "closed"}))
