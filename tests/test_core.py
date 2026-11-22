@@ -1479,6 +1479,30 @@ class ServerTest(unittest.TestCase):
         self.assertNotIn("test-token", (self.snap / "report.html").read_text("utf-8"))  # файл отчёта без токена
         self.assertEqual(self.req("GET", "/", headers={"Cookie": cookie}, host="evil.example")[0], 403)
 
+    def test_odd_token_is_refused_not_crashed(self):
+        """Токен не из ASCII (в ссылке, заголовке, cookie) — отказ 403, а не исключение в обработчике."""
+        from lanmap import server
+        self.assertFalse(server.token_ok("тест", "test-token"))
+        self.assertFalse(server.token_ok(None, "test-token"))
+        self.assertEqual(self.req("GET", "/?t=%D1%82%D0%B5%D1%81%D1%82")[0], 403)
+        self.assertEqual(self.req("GET", "/", headers={"Cookie": f"lanmap_{self.port}=\xe9t\xe9"})[0], 403)
+        code, _, _ = self.req("POST", "/api/check", {"code": "E8"}, {"X-LanMap-Token": "\xe9t\xe9"})
+        self.assertEqual(code, 403)
+
+    def test_body_that_never_arrives(self):
+        """Обещал 100 байт, прислал 10 и замолчал: сервер отвечает 408 по сроку, поток не висит."""
+        import socket
+        handler = self.httpd.RequestHandlerClass
+        old = handler.timeout
+        handler.timeout = 0.5
+        self.addCleanup(setattr, handler, "timeout", old)
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as sock:
+            sock.sendall((f"POST /api/check HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
+                          "X-LanMap-Token: test-token\r\nContent-Type: application/json\r\n"
+                          "Content-Length: 100\r\n\r\n{\"code\": \"E").encode())
+            reply = sock.recv(4096).decode("utf-8", "replace")
+        self.assertIn(" 408 ", reply.split("\r\n", 1)[0])
+
     def test_api_needs_header_token(self):
         self.assertEqual(self.api("/api/check", {"code": "E8", "status": "done"}, token="")[0], 403)
         self.assertEqual(self.api("/api/check", {"code": "E8", "status": "done"}, token="wrong")[0], 403)

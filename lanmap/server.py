@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import secrets
 import threading
 import time
@@ -22,6 +23,15 @@ from lanmap import ops
 LOOPBACK = "127.0.0.1"
 DEFAULT_PORT = 7480  # вне диапазонов, которые Windows часто резервирует под Hyper-V (8000–9500)
 MAX_BODY = 64 * 1024
+BODY_TIMEOUT = 20  # секунд на любое чтение из сокета: тело запроса, которое не доходит, не держит поток вечно
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")  # алфавит secrets.token_urlsafe
+
+
+def token_ok(given, token: str) -> bool:
+    """Токен из ссылки, cookie или заголовка. Сначала вид (только ASCII нужной длины), потом сравнение за
+    постоянное время: compare_digest на строке не из ASCII бросает исключение, а не отказывает."""
+    return isinstance(given, str) and bool(_TOKEN_RE.fullmatch(given)) and hmac.compare_digest(
+        given.encode("ascii"), token.encode("ascii"))
 
 
 class Watcher:
@@ -235,6 +245,7 @@ def _report_path() -> Path | None:
 class Handler(BaseHTTPRequestHandler):
     server_version = "LanMap"
     state: State  # задаётся в make_server
+    timeout = BODY_TIMEOUT  # StreamRequestHandler ставит его сокету: зависшее чтение кончается TimeoutError
 
     # --- проверки ---------------------------------------------------------------------------
 
@@ -253,11 +264,11 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return False
         morsel = jar.get(self._cookie_name())
-        return bool(morsel) and hmac.compare_digest(morsel.value, self.state.token)
+        return bool(morsel) and token_ok(morsel.value, self.state.token)
 
     def _header_ok(self) -> bool:
         """Запросы API несут токен в своём заголовке: чужая страница так не может без разрешения CORS."""
-        return hmac.compare_digest(self.headers.get("X-LanMap-Token", ""), self.state.token)
+        return token_ok(self.headers.get("X-LanMap-Token", ""), self.state.token)
 
     # --- ответы -----------------------------------------------------------------------------
 
@@ -299,7 +310,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/":
             given = parse_qs(url.query).get("t", [""])[0]
             if given:
-                if not hmac.compare_digest(given, self.state.token):
+                if not token_ok(given, self.state.token):
                     return self._text(403, "Ссылка устарела: открой новую из окна python -m lanmap serve.")
                 cookie = f"{self._cookie_name()}={self.state.token}; Path=/; HttpOnly; SameSite=Strict"
                 return self._send(303, b"", "text/plain", {"Location": "/", "Set-Cookie": cookie})
@@ -350,7 +361,15 @@ class Handler(BaseHTTPRequestHandler):
         if not 0 <= size <= MAX_BODY:
             return self._json(413, {"error": "слишком большой запрос"})
         try:
-            body = json.loads(self.rfile.read(size) or b"{}")
+            raw = self.rfile.read(size)
+        except TimeoutError:
+            self.close_connection = True
+            return self._json(408, {"error": "запрос не дошёл целиком"})
+        if len(raw) != size:
+            self.close_connection = True
+            return self._json(400, {"error": "запрос не дошёл целиком"})
+        try:
+            body = json.loads(raw or b"{}")
         except ValueError:
             return self._json(400, {"error": "испорченный JSON"})
         if not isinstance(body, dict):
