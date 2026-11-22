@@ -60,6 +60,7 @@ def is_keenetic(host: str, timeout: float = 4) -> str | None:
     try:
         opener.open(urllib.request.Request(f"http://{host}/auth", headers={"User-Agent": USER_AGENT}), timeout=timeout)
     except urllib.error.HTTPError as exc:
+        exc.close()
         if exc.headers.get("X-NDM-Challenge"):
             return exc.headers.get("X-NDM-Product") or exc.headers.get("X-NDM-Realm") or "Keenetic"
     except Exception:
@@ -85,6 +86,7 @@ class KeeneticClient:
             self._request("/auth")
             return  # уже авторизованы
         except urllib.error.HTTPError as exc:
+            exc.close()
             if exc.code != 401:
                 raise KeeneticError(f"роутер ответил HTTP {exc.code} на /auth")
             realm = exc.headers.get("X-NDM-Realm", "")
@@ -97,6 +99,7 @@ class KeeneticClient:
         try:
             self._request("/auth", body)
         except urllib.error.HTTPError as exc:
+            exc.close()
             if exc.code == 401:
                 raise KeeneticError("неверный логин или пароль") from None
             raise KeeneticError(f"вход не удался: HTTP {exc.code}") from None
@@ -107,6 +110,7 @@ class KeeneticClient:
             with self._request("/rci/" + rci_path.lstrip("/")) as resp:
                 return json.loads(resp.read().decode("utf-8", "replace") or "null")
         except urllib.error.HTTPError as exc:
+            exc.close()
             raise KeeneticError(f"{rci_path}: HTTP {exc.code}") from None
 
 

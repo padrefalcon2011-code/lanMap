@@ -21,6 +21,17 @@ MAC_B = "00:00:5E:00:53:0B"   # диапазон IANA для документа�
 MAC_C = "00:00:5E:00:53:0C"
 
 
+def finish_snapshot(snap: Path, **meta) -> Path:
+    """Тестовый срез как завершённый: finished в meta.json и пустые основные сырые файлы, которых нет."""
+    from lanmap import snapshot
+    m = {**(read_json(snap / "meta.json", {}) or {}), "finished": "2026-01-01T00:00:00", **meta}
+    write_json(snap / "meta.json", m)
+    for name in snapshot.CORE_RAW:
+        if not (snap / "raw" / name).exists():
+            write_json(snap / "raw" / name, {} if name in ("ping.json", "ports.json") else [])
+    return snap
+
+
 def device(**facts) -> dict:
     base = {"ports": [], "mdns_services": [], "mdns_txt": {}, "upnp": {}, "onvif": {}, "http": [], "tls": [],
             "rtsp": [], "ssdp_server": [], "wsd_types": [], "oui": None, "private_mac": False}
@@ -366,11 +377,49 @@ class ChangesTest(unittest.TestCase):
         base = Path(tempfile.mkdtemp(dir=TMP.name))
         for name in ("2026-01-01_100000", "2026-01-02_100000", "2026-01-03_100000"):
             write_json(base / name / "meta.json", {})
+            finish_snapshot(base / name)
         self.assertEqual(changes.previous_snapshot(base / "2026-01-02_100000").name, "2026-01-01_100000")
         self.assertIsNone(changes.previous_snapshot(base / "2026-01-01_100000"))
         new = model([mdev(MAC_B, ["192.0.2.10"])])
         c = self.cmp(model([]), new)
         self.assertIn("Новые устройства", _changes({**new, "changes": c}))
+
+    def test_baseline_skips_broken_and_foreign(self):
+        """База сравнения — только завершённый, целый срез той же сети; номера …_2 < …_10."""
+        from lanmap import changes, snapshot
+        base = Path(tempfile.mkdtemp(dir=TMP.name))
+        net = {"interface": {"network": "192.0.2.0/24"}}
+        good = finish_snapshot(base / "2026-01-01_100000", **net)
+        snap = finish_snapshot(base / "2026-01-05_100000", **net)
+        self.assertEqual(changes.previous_snapshot(snap), good)
+        # Прерванный (нет finished), чужая сеть, файл изменён после съёмки — пропускаются
+        write_json(base / "2026-01-02_100000" / "meta.json", net)
+        finish_snapshot(base / "2026-01-03_100000", interface={"network": "198.51.100.0/24"})
+        damaged = finish_snapshot(base / "2026-01-04_100000", **net)
+        m = read_json(damaged / "meta.json")
+        write_json(damaged / "meta.json", {**m, "manifest": snapshot.manifest(damaged)})
+        self.assertEqual(changes.previous_snapshot(snap), damaged)
+        write_json(damaged / "raw" / "ping.json", {"192.0.2.9": {"alive": True}})
+        self.assertEqual(snapshot.verify(damaged)["changed"], ["raw/ping.json"])
+        self.assertEqual(changes.previous_snapshot(snap), good)
+        # Без основного файла — тоже не срез
+        (good / "raw" / "arp.json").unlink()
+        self.assertIsNone(changes.previous_snapshot(snap))
+        self.assertLess(snapshot.order_key(base / "2026-01-01_100000_2"), snapshot.order_key(base / "2026-01-01_100000_10"))
+
+    def test_latest_ignores_rebuilt_interrupted(self):
+        """Прерванный срез, пересобранный вручную (devices.json есть, finished нет), не считается последним."""
+        from unittest import mock
+        from lanmap import scan
+        base = Path(tempfile.mkdtemp(dir=TMP.name))
+        done = finish_snapshot(base / "2026-01-01_100000")
+        write_json(done / "devices.json", {})
+        broken = base / "2026-01-02_100000"
+        write_json(broken / "meta.json", {})
+        write_json(broken / "devices.json", {})
+        with mock.patch.object(scan, "snapshots_dir", lambda: base):
+            self.assertEqual(scan.latest_snapshot(), done)
+            self.assertEqual(scan.latest_snapshot(complete=True), done)
 
     def test_render_smoke(self):
         """Отчёт собирается в обоих вариантах: с роутером и изменениями, без роутера и без прошлого среза."""
@@ -946,7 +995,7 @@ class ServerTest(unittest.TestCase):
         write_json(raw / "neighbors.json", [{"ip": "192.0.2.10", "mac": MAC_B, "state": "Reachable"}])
         write_json(raw / "ping.json", {"192.0.2.10": {"alive": True, "ttl": 64}})
         write_json(raw / "ports.json", {"tested": [23, 80], "open": {"192.0.2.10": [23]}})
-        cls.snap = snap
+        cls.snap = finish_snapshot(snap)
         cls.model = build(snap)
         cls.httpd = server.make_server(0, token="test-token")
         cls.httpd.RequestHandlerClass.log_message = lambda *a: None

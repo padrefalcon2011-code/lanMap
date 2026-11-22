@@ -4,12 +4,11 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import datetime as dt
-import re
 import time
 import urllib.parse
 from pathlib import Path
 
-from lanmap import __version__, netinfo
+from lanmap import __version__, netinfo, snapshot
 from lanmap.collectors import ScanContext, discovery, igd, protocols, tcp, windows
 from lanmap.collectors import dnswire
 from lanmap.collectors import onvif as onvif_mod
@@ -181,9 +180,9 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
 
 
 def latest_snapshot(complete: bool = False) -> Path | None:
-    """Последний срез. complete — только собранный (есть devices.json): прерванный срез оставляет папку без него,
-    и отметки владельца не должны уходить туда."""
-    need = "devices.json" if complete else "meta.json"
-    snaps = sorted(p for p in snapshots_dir().iterdir() if p.is_dir() and (p / need).exists()
-                   and re.match(r"\d{4}-\d\d-\d\d_", p.name))
-    return snaps[-1] if snaps else None
+    """Последний завершённый срез (snapshot.finished). complete — ещё и собранный (есть devices.json).
+
+    Прерванный срез не берётся никогда: даже пересобранный вручную, он не должен забрать страницу и отметки."""
+    snaps = sorted((p for p in snapshots_dir().iterdir() if p.is_dir() and snapshot.is_snapshot_name(p.name)),
+                   key=snapshot.order_key, reverse=True)
+    return next((p for p in snaps if snapshot.finished(p) and (not complete or (p / "devices.json").exists())), None)

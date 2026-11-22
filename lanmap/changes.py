@@ -12,26 +12,33 @@ MAC (если он единственный с обеих сторон) → об
 from __future__ import annotations
 
 import ipaddress
-import re
 from pathlib import Path
 
 from lanmap import checklist as cl_mod
 from lanmap import forwards as fw_mod
 from lanmap.util import read_json
 
-_SNAP_RE = re.compile(r"\d{4}-\d\d-\d\d_")
 MOBILE_TYPES = {"phone", "wearable"}
 
 
 def previous_snapshot(snapshot: Path) -> Path | None:
-    """Срез, сделанный прямо перед этим (по имени папки), — чтобы пересборка старого среза давала то же сравнение."""
+    """База сравнения: ближайший более ранний срез (по имени папки) — чтобы пересборка старого среза давала то же
+    сравнение. Только завершённый, с целыми файлами (snapshot.verify) и из той же сети: иначе сбой или ноутбук
+    в чужой сети дали бы ложные «изменения»."""
+    from lanmap import snapshot as snap_mod
     snapshot = Path(snapshot)
     parent = snapshot.parent
     if not parent.is_dir():
         return None
-    older = sorted(p for p in parent.iterdir() if p.is_dir() and _SNAP_RE.match(p.name)
-                   and (p / "meta.json").exists() and p.name < snapshot.name)
-    return older[-1] if older else None
+    me = snap_mod.order_key(snapshot)
+    mine = snap_mod.meta(snapshot)
+    older = sorted((p for p in parent.iterdir() if p.is_dir() and snap_mod.is_snapshot_name(p.name)
+                    and snap_mod.order_key(p) < me), key=snap_mod.order_key, reverse=True)
+    for p in older:
+        m = snap_mod.meta(p)
+        if snap_mod.finished(p, m) and snap_mod.same_network(mine, m) and snap_mod.verify(p)["ok"]:
+            return p
+    return None
 
 
 def tested_ports(snapshot: Path) -> set[int] | None:
