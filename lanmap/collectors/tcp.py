@@ -6,9 +6,11 @@ import hashlib
 import os
 import ssl
 import tempfile
+from pathlib import Path
 
 from lanmap.collectors import USER_AGENT, ScanContext
 from lanmap.ports import BANNER_PORTS, RTSP_PORTS, SILENT_PORTS, TLS_PORTS
+from lanmap.util import data_dir
 
 
 async def tcp_open(ctx: ScanContext, ip: str, port: int, sem: asyncio.Semaphore, timeout: float = 0.6) -> int | None:
@@ -32,10 +34,28 @@ async def scan_host(ctx: ScanContext, ip: str, ports: list[int], sem: asyncio.Se
     return sorted(p for p in found if p)
 
 
+CERT_TMP = "tmp-cert"
+
+
+def _cert_tmp_dir() -> Path:
+    """Папка для временных PEM внутри data/: в сертификате имена и адреса, в %TEMP% им не место.
+
+    Остатки прошлых запусков (если удаление тогда не удалось) убираются здесь же."""
+    path = data_dir() / CERT_TMP
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _decode_cert(der: bytes) -> dict:
-    """Разбор сертификата средствами стандартной библиотеки (через временный PEM-файл)."""
+    """Разбор сертификата средствами стандартной библиотеки (через временный PEM-файл в data/).
+
+    Из памяти stdlib сертификат не разбирает. Файл не удалился — в ответе поле temp_left с его именем."""
     info: dict = {"sha256": hashlib.sha256(der).hexdigest()}
-    fd, path = tempfile.mkstemp(suffix=".pem")
+    try:
+        fd, path = tempfile.mkstemp(suffix=".pem", prefix="cert-", dir=_cert_tmp_dir())
+    except OSError as exc:
+        info["error"] = f"нет места для временного файла: {exc.__class__.__name__}"
+        return info
     try:
         with os.fdopen(fd, "w") as fh:
             fh.write(ssl.DER_cert_to_PEM_cert(der))
@@ -50,9 +70,21 @@ def _decode_cert(der: bytes) -> dict:
     finally:
         try:
             os.unlink(path)
-        except OSError:
-            pass
+        except OSError as exc:
+            info["temp_left"] = f"{CERT_TMP}/{Path(path).name}: {exc.__class__.__name__}"
     return info
+
+
+def sweep_cert_tmp() -> list[str]:
+    """Удалить временные PEM, оставшиеся от прошлых срезов → имена тех, что удалить не вышло."""
+    left = []
+    path = data_dir() / CERT_TMP
+    for f in path.glob("cert-*.pem") if path.is_dir() else []:
+        try:
+            f.unlink()
+        except OSError:
+            left.append(f.name)
+    return left
 
 
 async def probe(ctx: ScanContext, ip: str, port: int, sem: asyncio.Semaphore) -> dict:

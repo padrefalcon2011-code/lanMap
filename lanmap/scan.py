@@ -125,7 +125,13 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
     extra = announced_ports(multi, ctx)
     targets = {ip: sorted(set(ports) | extra.get(ip, set())) for ip in candidates}
     progress.step(f"Проверяю {len(ports)} TCP-портов на каждом из {len(targets)} адресов")
+    tcp.sweep_cert_tmp()  # остатки прошлых срезов
     open_ports, probes = asyncio.run(_ports_and_probes(ctx, targets, progress))
+    left = tcp.sweep_cert_tmp()
+    if left:
+        # Во временных PEM — имена и адреса из сертификатов; лежат в data/, но владелец должен знать
+        meta["warnings"] = [f"не удалось удалить временные файлы сертификатов в data/{tcp.CERT_TMP}: {len(left)}"]
+        progress.step(meta["warnings"][0])
     write_json(raw / "ports.json", {"tested": ports, "announced_extra": {k: sorted(v) for k, v in extra.items()},
                                     "open": open_ports})
     write_json(raw / "probes.json", probes)

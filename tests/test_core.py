@@ -48,6 +48,32 @@ class UtilTest(unittest.TestCase):
         self.assertFalse(ctx.in_scope("example.com"))
 
 
+class CertTest(unittest.TestCase):
+    """Сертификат разбирается через временный файл внутри data/, а не в %TEMP%."""
+    DER = "MIIBqDCCAU6gAwIBAgIUbIS2ptlrkWgBh3ClIrih8X5T2MIwCgYIKoZIzj0EAwIwGTEXMBUGA1UEAwwOZGV2aWNlLmV4YW1wbGUwHhcNMjYxMTIyMDM1NjQyWhcNMzYxMTE5MDM1NjQyWjAZMRcwFQYDVQQDDA5kZXZpY2UuZXhhbXBsZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABI3QkMx4nRUKjmVfMcUWiPQ89/Mls577LJ3cmlG5GjAZDDpBHp4NRyRQwbWsaMRz7952Q5JGlrDTPWAGm7t+i3+jdDByMB0GA1UdDgQWBBTh23VqasWq55s55yvtAMFMNEwyeTAfBgNVHSMEGDAWgBTh23VqasWq55s55yvtAMFMNEwyeTAPBgNVHRMBAf8EBTADAQH/MB8GA1UdEQQYMBaCDmRldmljZS5leGFtcGxlhwTAAAIFMAoGCCqGSM49BAMCA0gAMEUCIQDend63LpifNvNZpWf3LS/Yz1Rucm3G2pJ3doLa3tZLkAIgSgC8Y2iL1BcigHnL4rdUDVBMyCbJYsbeGosPDQkFrxo="
+
+    def test_decode_in_data_dir(self):
+        import base64
+        from unittest import mock
+        from lanmap.collectors import tcp
+        from lanmap.util import data_dir
+        made = []
+        real = tempfile.mkstemp
+        with mock.patch.object(tcp.tempfile, "mkstemp", lambda **kw: made.append(kw["dir"]) or real(**kw)):
+            info = tcp._decode_cert(base64.b64decode(self.DER))
+        self.assertEqual(info["subject"].get("commonName"), "device.example")
+        self.assertIn("192.0.2.5", info["san"])
+        self.assertTrue(info["not_after"])
+        self.assertEqual(Path(made[0]), data_dir() / tcp.CERT_TMP)
+        self.assertEqual(list((data_dir() / tcp.CERT_TMP).glob("*.pem")), [])
+        # Удалить не вышло — сказано в ответе, а следующий срез подметает остатки
+        with mock.patch.object(tcp.os, "unlink", side_effect=PermissionError):
+            info = tcp._decode_cert(base64.b64decode(self.DER))
+        self.assertIn("PermissionError", info["temp_left"])
+        self.assertEqual(tcp.sweep_cert_tmp(), [])
+        self.assertEqual(list((data_dir() / tcp.CERT_TMP).glob("*.pem")), [])
+
+
 class DnsTest(unittest.TestCase):
     def test_roundtrip(self):
         name = dnswire.encode_name("cam._http._tcp.local")
