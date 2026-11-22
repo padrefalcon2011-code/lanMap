@@ -99,6 +99,40 @@ def cert_days(not_after: str | None, at: str | None) -> int | None:
     return int((until - when) // 86400)
 
 
+SOURCE_NAMES = {"arp": "ARP", "neighbors": "кэш соседей Windows", "router": "роутер"}
+
+
+def contested_ips(arp: list, neighbors: list, clients: list, aliases: dict | None = None) -> dict[str, list[dict]]:
+    """Спорные адреса: один IPv4 — разные MAC → {ip: [{"source", "mac"}]}.
+
+    Источники: свежий ARP-ответ; кэш соседей Windows — только если ARP по адресу не ответил (кэш снят до ARP и
+    бывает устаревшим); активные клиенты роутера. Причины разные — два устройства с одним адресом (заводской
+    адрес камер), устройство за ретранслятором, устаревшая аренда, — поэтому это подозрение с наблюдениями,
+    а не приговор."""
+    aliases = aliases or {}
+
+    def mac_of(value):
+        m = norm_mac(value)
+        return aliases.get(m, m) if m else None
+
+    seen: dict[str, dict[tuple[str, str], None]] = {}
+    answered = {a["ip"] for a in arp if a.get("mac") and a.get("ip")}
+    for a in arp:
+        if a.get("mac") and a.get("ip"):
+            seen.setdefault(a["ip"], {})[("arp", mac_of(a["mac"]))] = None
+    for n in neighbors:
+        if n.get("mac") and n.get("ip") and n["ip"] not in answered and set((mac_of(n["mac"]) or "0").replace(":", "")) != {"0"}:
+            seen.setdefault(n["ip"], {})[("neighbors", mac_of(n["mac"]))] = None
+    for c in clients:
+        if c.get("active") and c.get("ip") and c.get("mac"):
+            seen.setdefault(c["ip"], {})[("router", mac_of(c["mac"]))] = None
+    out = {}
+    for ip, obs in seen.items():
+        if len({mac for _, mac in obs}) > 1:
+            out[ip] = [{"source": src, "mac": mac} for src, mac in obs]
+    return out
+
+
 def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
     """Сырые улики среза → список устройств. aliases: склейка MAC (вторичный → основной)."""
     aliases = aliases or {}
@@ -435,7 +469,18 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
                 dev.add("router", f"Имя, которое устройство сообщило роутеру (DHCP): {c['hostname']}")
             dev.add("router", connection_text(c))
 
-    # 11. OUI, частный MAC, TTL
+    # 11. Спорные адреса: один IP — разные MAC. Пометка у каждого устройства, чей MAC там замечен
+    contested = contested_ips(arp, neighbors, (router or {}).get("clients") or [], aliases)
+    for ip, obs in sorted(contested.items()):
+        macs = {o["mac"] for o in obs}
+        text = "; ".join(f'{SOURCE_NAMES[o["source"]]} — {o["mac"]}' for o in obs)
+        for dev in devs.values():
+            if dev.mac in macs:
+                dev.facts.setdefault("contested", []).append({"ip": ip, "observations": obs})
+                dev.add("conflict", f"Спорный адрес {ip}: {text}. Два устройства с одним адресом (например, "
+                        "заводской адрес камер), устройство за ретранслятором или устаревшая запись", ip)
+
+    # 12. OUI, частный MAC, TTL
     result = []
     for dev in devs.values():
         private = is_private_mac(dev.mac)
@@ -461,6 +506,7 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
             "is_local": local_ip in dev.ips,
             "is_gateway": gateway in dev.ips if gateway else False,
             "duplicate_mac": bool(dev.facts.get("duplicate_mac")),
+            "contested": dev.facts.get("contested") or [],
             "alive": dev.facts["alive"],
             "in_cache_only": not dev.facts["alive"] and any(neigh_state.get(ip) for ip in dev.ips),
             "services": [dev.services[p] for p in sorted(dev.services)],

@@ -802,6 +802,13 @@ if(L){
   $$('[data-st]',c).forEach(b=>b.addEventListener('click',async()=>{
    try{await api('/api/finding',{check:d.check,key:d.key,status:b.dataset.st,reason:inp.value},c);back(c.dataset.id);}catch(e){}}));});
 
+ // «Спорный адрес»: пять ARP-запросов — ответят ли разные MAC
+ $$('[data-ipcheck]').forEach(b=>b.addEventListener('click',async ev=>{ev.stopPropagation();
+  try{const j=await api('/api/ipcheck',{ip:b.dataset.ipcheck},b);
+   const m=j.macs.map(x=>`${x.mac} — ${x.count} из ${j.tries}`).join('; ');
+   toast(!j.macs.length?`${j.ip}: по ARP никто не ответил`:j.macs.length>1?`${j.ip}: отвечают разные устройства (${m}) — адрес действительно спорный`
+    :`${j.ip}: сейчас отвечает одно устройство (${m})`);}catch(e){}}));
+
  // E6, E8: сделано / не сделано + заметка
  $$('[data-mark]').forEach(c=>{const d=JSON.parse(c.dataset.mark);
   c.className='lv';

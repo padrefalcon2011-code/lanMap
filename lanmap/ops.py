@@ -407,6 +407,33 @@ def launch(target: str, action: str, ack: bool = False, **deps) -> dict:
 
 # --- «Разобрать с ИИ»: промт для ИИ владельца и приём ответа (lanmap/aiparse.py) --------------------
 
+def ip_check(ip: str, tries: int = 5, arp=None) -> dict:
+    """«Спорный адрес»: спросить IP по ARP несколько раз (только чтение, только своя подсеть) → какие MAC ответили.
+
+    Два устройства с одним адресом отвечают наперегонки, поэтому одного запроса мало."""
+    import ipaddress
+    import time
+    from lanmap.collectors import ScanContext, discovery
+    try:
+        ipaddress.IPv4Address(ip)
+    except ValueError:
+        raise OpError("Нужен IPv4-адрес") from None
+    net = pick_network()
+    ctx = ScanContext(local_ip=net.local_ip, network=net.network, gateway=net.gateway, if_index=net.if_index,
+                      local_mac=net.mac)
+    if not ctx.in_scope(ip) or ip == ctx.local_ip:
+        raise OpError("Адрес не из локальной подсети этого компьютера")
+    arp = arp or (lambda: discovery._send_arp((ip, ctx.local_ip)).get("mac"))
+    seen: dict[str, int] = {}
+    for i in range(tries):
+        mac = arp()
+        if mac:
+            seen[mac.upper()] = seen.get(mac.upper(), 0) + 1
+        if i < tries - 1:
+            time.sleep(0.3)
+    return {"ip": ip, "tries": tries, "macs": [{"mac": m, "count": n} for m, n in sorted(seen.items())]}
+
+
 def ai_prompt(target: str, with_names: bool = False, with_raw: bool = False) -> str:
     from lanmap import aiparse
     return aiparse.prompt(device(target), with_names, with_raw)

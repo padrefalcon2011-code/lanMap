@@ -388,6 +388,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._launch(body)
         if route == "/api/ai/check":
             return self._ai_check(body)
+        if route == "/api/ipcheck":  # только читает сеть, отчёт не пересобирает
+            try:
+                return self._json(200, {"ok": True, **ops.ip_check(self._str(body, "ip"))})
+            except ops.OpError as exc:
+                return self._json(400, {"error": str(exc)})
+            except Exception as exc:
+                return self._json(500, {"error": f"Ошибка LanMap ({exc.__class__.__name__})"})
         action = {"/api/sign": self._sign, "/api/finding": self._finding, "/api/check": self._check,
                   "/api/recheck": self._recheck, "/api/ai/apply": self._ai_apply}.get(route)
         if not action:

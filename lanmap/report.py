@@ -20,6 +20,7 @@ from lanmap import security as sec_mod
 from lanmap import share as share_mod
 from lanmap import snapshot as snapshot_mod
 from lanmap.recheck import SUPPORTED as RECHECKABLE
+from lanmap import devices as dev_mod
 from lanmap.devices import CERT_SOON, connection_text
 from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
 from lanmap.report_assets import CSS, ICONS, JS, SETUP_JS
@@ -29,6 +30,7 @@ SOURCE_NAMES = {
     "router_dns": "DNS роутера", "dns": "обратный DNS", "oui": "MAC (IEEE)", "http": "HTTP", "tls": "TLS",
     "ssh": "SSH", "rtsp": "RTSP", "ssdp": "SSDP", "wsd": "WS-Discovery", "smb": "SMB", "mac": "MAC",
     "ttl": "TTL", "banner": "баннер", "local": "система", "router": "роутер", "dhcp": "DHCP-имя",
+    "conflict": "адрес",
 }
 FIELD_NAMES = {"type": "Тип", "vendor": "Производитель", "model": "Модель", "firmware": "Прошивка",
                "os": "ОС", "name": "Имя", "group": "Группа"}
@@ -205,6 +207,8 @@ def _flags(dev: dict) -> str:
         out.append(f'<span class="flag {"crit" if expired else "warn"}">{icon("lock", "s", label)}</span>')
     if dev.get("duplicate_mac"):
         out.append(f'<span class="flag warn">{icon("link", "s", "Общий MAC с другим устройством: мост или ретранслятор")}</span>')
+    if dev.get("contested"):
+        out.append(f'<span class="flag warn">{icon("alert", "s", "Спорный адрес: " + ", ".join(c["ip"] for c in dev["contested"]) + " — по нему видны разные MAC")}</span>')
     if r.get("segment") and r["segment"].lower() not in ("home", "домашняя сеть"):
         out.append(f'<span class="pc warn" title="Сегмент сети по данным роутера">{e(r["segment"])}</span>')
     if len(dev["ips"]) > 1:
@@ -285,6 +289,13 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
         f'<div class="sline"><span class="pc p{f["priority"]}">{icon("shield", "s")}П{f["priority"]}</span>'
         f'<a href="#sec-{e(f["id"])}">{e(sec_mod.BY_ID[f["id"]].title)}</a>{_status_chip(f)}</div>'
         for f in found or [])
+    slines += "".join(
+        f'<div class="sline">{icon("alert", "s")}<span title="Два устройства с одним адресом (например, заводской адрес '
+        f'камер), устройство за ретранслятором или устаревшая запись">Спорный адрес <b>{e(c["ip"])}</b>: '
+        f'{e("; ".join(dev_mod.SOURCE_NAMES.get(o["source"], o["source"]) + " — " + o["mac"] for o in c["observations"]))}'
+        f'</span><button class="sbtn live-only" data-ipcheck="{e(c["ip"])}" title="Спросить адрес по ARP пять раз: '
+        f'ответят ли разные устройства">{icon("refresh", "s")}перепроверить</button></div>'
+        for c in dev.get("contested") or [])
     # шапка боковой панели: на карте подробности открываются сбоку (или снизу), а не внутри плитки
     head = (f'<div class="dhead"><span class="ticon" {gstyle(ident["group"])}>{icon(type_icon(ident["type"]), "", ident["type_label"])}'
             f'</span><span class="tmain"><b>{e(dev["title"])}</b><span class="sub">{e(dev.get("subtitle") or ident.get("type_label") or "")}</span></span>'

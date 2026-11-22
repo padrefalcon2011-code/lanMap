@@ -450,6 +450,46 @@ def model(devs, router=None, name="2026-01-01_000000"):
     return {"snapshot": name, "meta": {"started": "2026-01-01T00:00:00"}, "router": router, "devices": devs}
 
 
+class ContestedIpTest(unittest.TestCase):
+    """Спорный адрес: один IP — разные MAC (заводской адрес камер, ретранслятор, устаревшая запись)."""
+
+    def test_sources(self):
+        from lanmap.devices import contested_ips
+        arp = [{"ip": "192.0.2.10", "mac": MAC_B}, {"ip": "192.0.2.11", "mac": MAC_C}]
+        neigh = [{"ip": "192.0.2.10", "mac": MAC_C},                       # ARP ответил — кэш не в счёт
+                 {"ip": "192.0.2.12", "mac": MAC_B}, {"ip": "192.0.2.12", "mac": "00-00-00-00-00-00"}]
+        clients = [{"ip": "192.0.2.10", "mac": MAC_C.lower(), "active": True},
+                   {"ip": "192.0.2.11", "mac": MAC_B, "active": False}]    # неактивная аренда — не в счёт
+        got = contested_ips(arp, neigh, clients)
+        self.assertEqual(list(got), ["192.0.2.10"])
+        self.assertEqual(sorted((o["source"], o["mac"]) for o in got["192.0.2.10"]),
+                         [("arp", MAC_B), ("router", MAC_C)])
+        self.assertEqual(contested_ips(arp, neigh, clients, {MAC_C: MAC_B}), {})  # склеенные владельцем MAC
+
+    def test_tile_and_check(self):
+        from unittest import mock
+        from lanmap import ops
+        from lanmap.report import _detail, _flags
+        snap = Path(tempfile.mkdtemp(dir=TMP.name)) / "2026-01-07_000000"
+        write_json(snap / "meta.json", {"interface": {"local_ip": "192.0.2.5", "network": "192.0.2.0/24"}})
+        write_json(snap / "raw" / "arp.json", [{"ip": "192.0.2.10", "mac": MAC_B}])
+        write_json(snap / "raw" / "router.json", {"kind": "keenetic", "data": {"hotspot": {"host": [
+            {"mac": MAC_C.lower(), "ip": "192.0.2.10", "active": True, "registered": False}]}}})
+        from lanmap.build import make_model
+        devs = {d["mac"]: d for d in make_model(finish_snapshot(snap))["devices"]}
+        for mac in (MAC_B, MAC_C):
+            self.assertEqual(devs[mac]["contested"][0]["ip"], "192.0.2.10")
+            self.assertIn("Спорный адрес: 192.0.2.10", _flags(devs[mac]))
+        self.assertIn('data-ipcheck="192.0.2.10"', _detail(devs[MAC_B]))
+        net = mock.Mock(local_ip="192.0.2.5", network="192.0.2.0/24", gateway="192.0.2.1", if_index=1, mac=None)
+        answers = iter([MAC_B, MAC_C, MAC_B, None, MAC_B])
+        with mock.patch.object(ops, "pick_network", lambda: net), mock.patch("time.sleep"):
+            j = ops.ip_check("192.0.2.10", arp=lambda: next(answers))
+            self.assertEqual(j["macs"], [{"mac": MAC_B, "count": 3}, {"mac": MAC_C, "count": 1}])
+            with self.assertRaises(ops.OpError):
+                ops.ip_check("198.51.100.7", arp=lambda: None)  # чужая подсеть не спрашивается
+
+
 class RouterCompletenessTest(unittest.TestCase):
     """Модуль роутера сам объявляет, какие пробросы читает: молчание не значит «пробросов нет»."""
 
