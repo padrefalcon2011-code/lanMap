@@ -23,7 +23,7 @@ from lanmap.recheck import SUPPORTED as RECHECKABLE
 from lanmap import devices as dev_mod
 from lanmap.devices import CERT_SOON, connection_text
 from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
-from lanmap.report_assets import CSS, ICONS, JS, SETUP_JS
+from lanmap.report_assets import ASK_JS, CSS, ICONS, JS, SETUP_JS
 
 SOURCE_NAMES = {
     "registry": "реестр владельца", "upnp": "UPnP", "onvif": "ONVIF", "mdns": "mDNS", "netbios": "NetBIOS",
@@ -71,6 +71,16 @@ def live(data: dict) -> str:
 def _script_json(data: dict) -> str:
     """JSON внутри <script>: без «</», иначе браузер закроет тег раньше времени."""
     return json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+
+
+def _advice_button(prompt: dict[str, str], label: str = "Разобрать с ИИ") -> str:
+    return (f'<button type="button" class="act" data-advice="{live(prompt)}">'
+            f'{icon("bot", "s")}<span class="lbl">{e(label)}</span></button>')
+
+
+def _advice_assets() -> str:
+    data = {"intro": askai_mod.ADVICE_INTRO, "setup": askai_mod.SETUP_ADVICE, "camera": askai_mod.CAMERA_ADVICE}
+    return f'<script type="application/json" id="aiadvice">{_script_json(data)}</script><script>{ASK_JS}</script>'
 
 
 def tip(text: str) -> str:
@@ -298,7 +308,8 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
         f'камер), устройство за ретранслятором или устаревшая запись">Спорный адрес <b>{e(c["ip"])}</b>: '
         f'{e("; ".join(dev_mod.SOURCE_NAMES.get(o["source"], o["source"]) + " — " + o["mac"] for o in c["observations"]))}'
         f'</span><button class="sbtn live-only" data-ipcheck="{e(c["ip"])}" title="Спросить адрес по ARP пять раз: '
-        f'ответят ли разные устройства">{icon("refresh", "s")}перепроверить</button></div>'
+        f'ответят ли разные устройства">{icon("refresh", "s")}перепроверить</button>'
+        f'{_advice_button(askai_mod.address_conflict(c["observations"]))}</div>'
         for c in dev.get("contested") or [])
     slines += _history(dev)
     # шапка боковой панели: на карте подробности открываются сбоку (или снизу), а не внутри плитки
@@ -626,7 +637,7 @@ CRIT_STATES = {"ok": ("check", "ok", "выполнен"), "fail": ("x", "no", "�
                "owner": ("pencil", "own", "отмечаешь ты"), "unknown": ("question", "unk", "нечем проверить")}
 
 
-def _crit_row(c: dict, present: set[str]) -> str:
+def _crit_row(c: dict, present: set[str], advice: askai_mod.Advice) -> str:
     ico, cls, label = CRIT_STATES[c["status"]]
     if c["status"] == "fail" and c.get("likely"):
         label += " (вероятно)"
@@ -678,6 +689,8 @@ def _crit_row(c: dict, present: set[str]) -> str:
     if c.get("skipped"):
         body.append(f'<div class="enote">{icon("question", "s")}<span>Не проверялось: '
                     f'{e("; ".join(s.lower() for s in c["skipped"]))}</span></div>')
+    if c["status"] != "ok" or c["id"] in ("E6", "E8"):
+        body.append(_advice_button(advice.criterion(c)))
     return (f'<details class="erow {cls}"><summary><span class="est {cls}" title="{e(label)}" aria-label="{e(label)}">'
             f'{icon(ico)}</span><span class="ecode">{e(c["id"])}</span>'
             f'<span class="eico">{icon(CRIT_ICONS.get(c["id"], "info"))}</span><span class="etitle">{e(c["title"][:1].upper() + c["title"][1:])}</span>'
@@ -690,6 +703,7 @@ def _checklist(model: dict) -> str:
     if not cl:
         return ""
     present = {d["key"] for d in model["devices"]}
+    advice = askai_mod.Advice(model)
     share = round(100 * cl["score"] / cl["total"]) if cl["total"] else 0
     diff = (model.get("changes") or {}).get("checklist")
     was = ""
@@ -703,7 +717,7 @@ def _checklist(model: dict) -> str:
     head = (f'<summary><h2>{icon("check")}Порядок в сети</h2><span class="score"><b>{cl["score"]}</b> из {cl["total"]}</span>'
             f'<span class="sbar" title="{cl["score"]} из {cl["total"]} критериев"><i style="width:{share}%"></i></span>'
             f'{was}<span class="counters">{legend}</span>{icon("chevron", "chev")}</summary>')
-    rows = "".join(_crit_row(c, present) for c in cl["criteria"])
+    rows = "".join(_crit_row(c, present, advice) for c in cl["criteria"])
     return f'<details class="panel" id="order">{head}<div class="panel-body erows">{rows}</div></details>'
 
 
@@ -801,7 +815,7 @@ def _scheme(check, items: list[dict]) -> str:
     return f'<div class="scheme" role="img" aria-label="{e(check.risk)}">{"".join(parts)}</div>'
 
 
-def _dev_row(check, f: dict, present: set[str], rvendor: str | None) -> str:
+def _dev_row(check, f: dict, present: set[str], rvendor: str | None, advice: askai_mod.Advice) -> str:
     """Устройство находки: строка, по нажатию — инструкция именно для него и команда отметки."""
     conf = (f'<span class="conf {f["confidence"]}" title="Степень подтверждения">'
             f'{e(sec_mod.CONFIDENCE_NAMES[f["confidence"]])}</span>')
@@ -810,7 +824,7 @@ def _dev_row(check, f: dict, present: set[str], rvendor: str | None) -> str:
     goto = (f'<button class="act goto" data-goto="{e(f["key"])}" title="Показать плитку устройства">'
             f'{icon("open", "s")}</button>' if f["key"] in present else "")
     steps, exact, rname = sec_mod.device_steps(check, f, rvendor)
-    ol = "".join(f"<li>{e(s)}</li>" for s in steps) + f'<li class="vfy">{e(check.verify)}</li>'
+    ol = "".join(f"<li>{e(s)}</li>" for s in steps) + f'<li class="vfy"><b>Как проверить</b> · {e(check.verify)}</li>'
     target_name = (f.get("platform") or "").capitalize() or f.get("vendor") or "это устройство"
     kind = (f'<span class="vend">{icon("check", "s")}под {e(target_name)}</span>' if exact
             else f'<span class="vend gen">{icon("info", "s")}общая инструкция: названия пунктов у разных '
@@ -827,7 +841,7 @@ def _dev_row(check, f: dict, present: set[str], rvendor: str | None) -> str:
             f'<span class="who"><span style="color:{color};display:inline-flex">{icon(type_icon(f.get("type")))}</span>'
             f'{e(f["title"])}</span>{ip}<span class="det">{e(f["detail"])}</span>{conf}{_status_chip(f)}{_recheck_chip(f)}'
             f'{goto}</summary>'
-            f'<div class="dbody">{kind}<ol>{ol}</ol>'
+            f'<div class="dbody">{kind}<ol>{ol}</ol>{_advice_button(advice.finding(check, f))}'
             f'<div class="cli" data-finding="{live(mark)}" data-id="f|{e(check.id)}|{e(f["key"])}">'
             f'Отметить (in_progress, fixed, accepted — оставляю осознанно): <code>{e(cmd)}</code>'
             f'<button class="act" data-copy="{e(cmd)}" title="Скопировать команду">{icon("copy", "s")}'
@@ -843,7 +857,7 @@ def _recheck_cmd(check, target: str) -> str:
             f'title="Скопировать команду">{icon("copy", "s")}<span class="lbl">копировать</span></button>')
 
 
-def _finding_card(check, items: list[dict], present: set[str], rvendor: str | None) -> str:
+def _finding_card(check, items: list[dict], present: set[str], rvendor: str | None, advice: askai_mod.Advice) -> str:
     """Карточка проверки в виде инфографики: схема, чем грозит, план, устройства с инструкциями."""
     live = [f for f in items if f["status"] not in sec_mod.QUIET_STATUSES]
     prio = min(f["priority"] for f in (live or items))
@@ -858,7 +872,7 @@ def _finding_card(check, items: list[dict], present: set[str], rvendor: str | No
     dev_ico = types.pop() if len(types) == 1 else "devices"
     todo = "".join(f'<li><span class="nm">{i}</span>{icon(dev_ico if ico == "@dev" else ico)}<span>{e(text)}</span></li>'
                    for i, (ico, text) in enumerate(check.todo, 1))
-    rows = "".join(_dev_row(check, f, present, rvendor) for f in items)
+    rows = "".join(_dev_row(check, f, present, rvendor, advice) for f in items)
     more = (f'<details class="more"><summary>{icon("info", "s")}Подробнее</summary><p class="frisk">{e(check.risk)}</p>'
             f'<div class="hgrid"><div class="hbox"><b>{icon("alert", "s")}Что может сломаться</b>{e(check.breaks)}</div>'
             f'<div class="hbox"><b>{icon("undo", "s")}Как вернуть</b>{e(check.rollback)}</div>'
@@ -882,6 +896,7 @@ def _security(model: dict) -> str:
     if not sec:
         return ""
     present = {d["key"] for d in model["devices"]}
+    advice = askai_mod.Advice(model)
     by_check: dict[str, list[dict]] = {}
     for f in sec["findings"]:
         by_check.setdefault(f["id"], []).append(f)
@@ -907,12 +922,13 @@ def _security(model: dict) -> str:
         return quiet, min(f["priority"] for f in items), list(sec_mod.BY_ID).index(cid)
 
     rvendor = sec_mod.router_vendor(model)
-    cards = "".join(_finding_card(sec_mod.BY_ID[cid], by_check[cid], present, rvendor)
+    cards = "".join(_finding_card(sec_mod.BY_ID[cid], by_check[cid], present, rvendor, advice)
                     for cid in sorted(by_check, key=order))
     if not live:
         cards = f'<div class="ok-big">{icon("check", "l")}Открытых находок нет.</div>' + cards
     skipped = "".join(
-        f'<div class="note">{icon("info", "s")}<span>Не проверялось: {e(sec_mod.BY_ID[cid].title.lower())} — {e(why)}</span></div>'
+        f'<div class="note skipnote">{icon("info", "s")}<span>Не проверялось: {e(sec_mod.BY_ID[cid].title.lower())} — {e(why)}</span>'
+        f'{_advice_button(advice.skipped(sec_mod.BY_ID[cid], why))}</div>'
         for cid, why in (sec.get("skipped") or {}).items())
     return (f'<details class="panel{" crit" if top == 1 else ""}" id="security">{head}'
             f'<div class="panel-body">{cards}{skipped}</div></details>')
@@ -991,12 +1007,13 @@ def _about(model: dict) -> str:
         f'<b>{e(x.get("detail") or snapshot_mod.PASS_NAMES.get(x.get("status"), ""))}</b></div>' for x in passport)
     stages = f'<div class="ptitle">Что удалось проверить</div><div class="agrid pass">{stages}</div>' if stages else ""
     wl = "".join(f'<div class="awarn">{icon("alert", "s")}<span>{e(t)}</span>{setup if s else ""}</div>' for t, s in warns)
+    help_btn = (_advice_button(askai_mod.Advice(model).coverage(gaps), "Разобрать неполный срез с ИИ") if warns else "")
     short = " · ".join(x for x in (f'{router.get("model") or "роутер"} {router.get("firmware") or ""}'.strip() if router else "",
                                    f'портов {meta.get("ports_tested")}' if meta.get("ports_tested") else "") if x)
     flag = (f'<span class="pc warn">{icon("alert", "s")}проверка неполная · {len(warns)}</span>' if warns
             else f'<span class="pc good">{icon("check", "s")}полная</span>')
     return (f'<details class="about"><summary>{icon("info", "s")}О срезе{" · " + e(short) if short else ""} {flag}</summary>'
-            f'<div class="abody">{wl}<div class="agrid">{rows}</div>{stages}'
+            f'<div class="abody">{wl}{help_btn}<div class="agrid">{rows}</div>{stages}'
             f'{_stale_setting()}'
             f'<p class="muted">LanMap только читает сеть и ничего не меняет на устройствах.</p></div></details>')
 
@@ -1179,6 +1196,7 @@ def render(model: dict) -> str:
 <footer>LanMap {e(meta.get('lanmap_version', ''))} · только чтение сети · отчёт содержит личные данные, не публикуй его</footer>
 </div>
 <script type="application/json" id="aiprompt">{_script_json({"prompt": aiparse_mod.PROMPT})}</script>
+{_advice_assets()}
 <script>{SETUP_JS}{JS}</script>
 </body></html>"""
 
@@ -1199,6 +1217,7 @@ def empty_page() -> str:
 <div class="lv go"><button class="sbtn save" id="go">{icon("refresh", "s")}<span>Сделать первый срез</span></button>
 <span id="st" class="scanst"></span></div>
 </div>
+{_advice_assets()}
 <script>{SETUP_JS}
 (function(){{const L=window.LANMAP;if(!L)return;
 window.lanmapSetup.mount(document.getElementById('setupbox'),true);

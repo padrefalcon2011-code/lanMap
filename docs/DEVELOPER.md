@@ -48,7 +48,8 @@ build.build   ─► devices.make_model ─► identify.resolve ─► security 
 | Отчёт | `lanmap/build.py` | Модель среза → `devices.json` и `report.html` |
 | | `lanmap/report.py`, `lanmap/report_assets.py`, `lanmap/report_icons.py` | HTML, стили и JS, значки |
 | Обмен | `lanmap/share.py`, `lanmap/anonymize.py` | Обезличенный рассказ об устройстве («Помочь опознать») |
-| | `lanmap/askai.py`, `lanmap/aiparse.py` | «Спросить ИИ» и «Разобрать с ИИ»: промт и проверка ответа |
+| | `lanmap/askai.py` | Обезличенные промты по всему отчёту и по одному решению (`Advice`, кнопки `data-advice`) |
+| | `lanmap/aiparse.py` | Промт для опознания устройства и проверка ответа |
 | Общее | `lanmap/util.py` | JSON (`read_json`, `read_state`, `BadJSON`), время, MAC, папка данных |
 | | `lanmap/credentials.py` | Пароли в диспетчере учётных данных Windows |
 | Сборка | `tools/build_portable.py` | Портативный zip со встраиваемым Python |

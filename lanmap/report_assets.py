@@ -317,7 +317,9 @@ font-size:13px;font-weight:700;flex:none}
 .drow .det{color:var(--muted);font-size:12px}.drow .goto{margin-left:auto;padding:3px 6px}
 .dbody{padding:2px 14px 10px 36px}
 .dbody ol{margin:6px 0;padding-left:20px;font-size:13px;line-height:1.5}.dbody li{margin:3px 0}
-.dbody li.vfy{list-style:none;margin-left:-20px;color:var(--good)}.dbody li.vfy::before{content:"✓ ";font-weight:700}
+.dbody li.vfy{list-style:none;margin-left:-20px;color:var(--muted)}
+.dbody>button[data-advice]{margin:2px 0 8px}
+.skipnote{flex-wrap:wrap;align-items:center}.abody>button[data-advice]{justify-self:start}
 .vend{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--good);font-weight:600;margin-right:12px}
 .vend.gen{color:var(--muted);font-weight:400}
 .fnote{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
@@ -340,7 +342,7 @@ background:var(--p);color:#fff;white-space:nowrap}
 .hbox b{display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:12px}
 .cli{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
 .cli code{font-family:ui-monospace,Consolas,monospace;background:var(--chip);padding:2px 6px;border-radius:6px;color:var(--fg)}
-.sline{display:flex;align-items:center;gap:6px;font-size:13px;margin-top:6px}
+.sline{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:13px;margin-top:6px}
 .sline a{color:inherit}
 .ok-big{display:flex;align-items:center;gap:10px;color:var(--good);font-weight:600;padding:6px 0}
 /* вид «список» */
@@ -729,34 +731,6 @@ function aiOpen(b){
  shdlg.showModal();}
 $$('[data-ai]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();aiOpen(b);}));
 
-// «Спросить ИИ»: обезличенный текст всего отчёта (lanmap/askai.py), только копирование — никуда не отправляется
-const askBtn=$('#askai');
-if(askBtn)askBtn.addEventListener('click',()=>{
- const ad=JSON.parse(askBtn.dataset.askai);
- const sico=n=>`<svg class="i s" aria-hidden="true"><use href="#i-${n}"/></svg>`;
- if(!shdlg){shdlg=document.createElement('dialog');shdlg.className='setupdlg';document.body.appendChild(shdlg);
-  shdlg.addEventListener('click',e=>{if(e.target===shdlg)shdlg.close();});}
- shdlg.innerHTML=`<div class="dh"><h2>${sico('bot')}Спросить ИИ</h2><button class="iconbtn" data-close title="Закрыть">${sico('x')}</button></div>
- <div class="setup"><section class="sx">
-  <p><b>Скопируй текст и вставь в чат с ИИ</b> — ChatGPT, Claude, GigaChat, Алиса. Он объяснит, что из находок
-   опасно на самом деле, что чинить первым и как — по шагам для твоих моделей.</p>
-  <p>Адреса, MAC, имена и подписи заменены метками У1, У2… — ИИ видит устройства и связи между ними, но не твою сеть.
-   Пробегись глазами перед отправкой. Это список слабых мест сети: для чата с ИИ годится, а на открытый форум — лучше после исправления.</p>
-  ${ad.raw?`<label class="shname"><input type="checkbox" data-raw> Добавить сырые строки
-   <span class="muted">— описания UPnP-пробросов от программ на устройствах: бывает имя компьютера или человека</span></label>`:''}
-  <textarea data-text></textarea>
-  <div class="lv"><button class="sbtn save" data-shcopy>${sico('copy')}<span>Копировать</span></button>
-   <span class="muted" data-size></span></div></section></div>`;
- const ta=$('[data-text]',shdlg),cr=$('[data-raw]',shdlg);
- const build=()=>{ta.value=ad.text+(cr&&cr.checked?'\n'+ad.raw:'');
-  $('[data-size]',shdlg).textContent=`${ta.value.split('\n').length} строк`;};
- build();if(cr)cr.addEventListener('change',build);
- $('[data-close]',shdlg).addEventListener('click',()=>shdlg.close());
- $('[data-shcopy]',shdlg).addEventListener('click',async ev=>{const l=$('span',ev.currentTarget);
-  try{await navigator.clipboard.writeText(ta.value);}catch(e){ta.select();document.execCommand('copy');}
-  l.textContent='✓ скопировано — вставь в чат';setTimeout(()=>l.textContent='Копировать',2500);});
- shdlg.showModal();});
-
 // всплывающие заметки: закрывать по клику мимо
 document.addEventListener('click',e=>{$$('details.more[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});
 sync();
@@ -880,7 +854,8 @@ if(L){
   const login=text=>{f.innerHTML=`<form class="lv" autocomplete="on"><input name="user" autocomplete="username" placeholder="логин камеры" maxlength="200" required>`
     +`<input name="password" type="password" autocomplete="current-password" placeholder="пароль" maxlength="500" required>`
     +`<button class="sbtn save" type="submit">${ico('camera')}<span>Кадр</span></button></form>`
-    +msg(text||'Пароль хранится в диспетчере учётных данных Windows. Лучше отдельный пользователь камеры только для просмотра.',!!text);
+    +msg(text||'Пароль хранится в диспетчере учётных данных Windows. Лучше отдельный пользователь камеры только для просмотра.',!!text)
+    +`<button class="act" type="button" data-advice-kind="camera">${ico('bot')}Помощь ИИ со входом</button>`;
    const form=$('form',f);form.user.focus();
    form.addEventListener('submit',async e=>{e.preventDefault();const btn=$('button',form),pw=form.password;btn.classList.add('busy');
     try{const j=await snapCall('login',{key,user:form.user.value.trim(),password:pw.value});pw.value='';show(j);}
@@ -1013,6 +988,47 @@ if(L){
 
 # Настройка (только в веб-интерфейсе): база производителей, вход в роутер, паспорт роутера для заявки.
 # Общая для пустой первой страницы (встроена в неё) и отчёта (окно по шестерёнке). Без сервера не запускается.
+ASK_JS = r"""
+// Обезличенные промты: весь отчёт или одно решение. Работает и в файле отчёта.
+(function(){
+const prompts=JSON.parse(document.getElementById('aiadvice').textContent);
+const ico=n=>`<svg class="i s" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+let dlg=null;
+document.addEventListener('click',e=>{
+ const button=e.target.closest('#askai, [data-advice], [data-advice-kind]');if(!button)return;
+ const full=button.id==='askai';
+ const request=JSON.parse(button.dataset.advice||'null') ?? prompts[button.dataset.adviceKind];
+ const data=full?JSON.parse(button.dataset.askai):
+  {text:prompts.intro+'\n\n'+request.task+'\n\n=== КОНТЕКСТ LANMAP ===\n'
+        +request.context.replace(/={3,}/g,'==')+'\n=== КОНЕЦ КОНТЕКСТА ===\n'};
+ if(!dlg){dlg=document.createElement('dialog');dlg.className='setupdlg';
+  dlg.setAttribute('aria-labelledby','ask-heading');document.body.appendChild(dlg);
+  dlg.addEventListener('click',ev=>{if(ev.target===dlg)dlg.close();});}
+ dlg.innerHTML=`<div class="dh"><h2 id="ask-heading">${ico('bot')}${full?'Спросить ИИ':'Разобрать с ИИ'}</h2>
+  <button class="iconbtn" data-close aria-label="Закрыть">${ico('x')}</button></div>
+ <div class="setup"><section class="sx">
+  <p><b>Скопируй промт и вставь его в чат или агент ИИ.</b> Проверь текст перед отправкой.</p>
+  ${data.raw?`<label class="shname"><input type="checkbox" data-raw> Добавить сырые строки
+   <span class="muted">— описания UPnP-пробросов от программ на устройствах: бывает имя компьютера или человека</span></label>`:''}
+  <textarea readonly aria-label="Промт для ИИ"></textarea>
+  <div class="lv"><button class="sbtn save" data-copy-prompt>${ico('copy')}<span>Копировать промт</span></button>
+   <span class="muted" role="status"></span></div></section></div>`;
+ const ta=dlg.querySelector('textarea'),raw=dlg.querySelector('[data-raw]'),status=dlg.querySelector('[role="status"]');
+ const update=()=>{ta.value=data.text+(raw?.checked?'\n'+data.raw:'');status.textContent='';};
+ update();raw?.addEventListener('change',update);
+ dlg.querySelector('[data-close]').addEventListener('click',()=>dlg.close());
+ dlg.querySelector('[data-copy-prompt]').addEventListener('click',async()=>{
+  try{await navigator.clipboard.writeText(ta.value);}catch(err){
+   ta.select();
+   try{if(!document.execCommand('copy'))throw new Error();}catch(e){
+    status.textContent='Текст выделен, нажми Ctrl+C';return;}}
+  status.textContent='Промт скопирован';});
+ dlg.showModal();
+});
+})();
+"""
+
+
 SETUP_JS = r"""
 window.lanmapSetup=(function(){
 const L=window.LANMAP;if(!L)return null;
@@ -1039,7 +1055,8 @@ function mount(box,numbered){
  <section class="sx" id="st-probe"><div class="sxhead"><span class="sxico">${ico('router')}</span><b>Паспорт роутера</b>
    <span class="sxst"></span></div>
   <p>Для роутера нет модуля? Собери обезличенный паспорт и отправь заявку: модуль добавят. Без пароля, только чтение.</p>
-  <div class="lv"><button class="sbtn" data-probe>${ico('search')}<span>Собрать</span></button></div><div class="probeout"></div></section>`;
+  <div class="lv"><button class="sbtn" data-probe>${ico('search')}<span>Собрать</span></button></div><div class="probeout"></div></section>
+ <div class="lv"><button class="act" type="button" data-advice-kind="setup">${ico('bot')}Помощь ИИ с настройкой</button></div>`;
  ouiInit(box);routerInit(box);probeInit(box);}
 
 // --- база производителей -------------------------------------------------------------------

@@ -1031,6 +1031,18 @@ class SecurityTest(unittest.TestCase):
         self.assertEqual(report.plural(5, ("дверь", "двери", "дверей")), "5 дверей")
         self.assertEqual(report.plural(21, ("дверь", "двери", "дверей")), "21 дверь")
 
+    def test_nas_steps_only_cover_observed_services(self):
+        from lanmap import security
+        check = security.BY_ID["NAS_EXTRA_SERVICES"]
+        steps, exact, _ = security.device_steps(check, {"vendor": "Synology", "ports": [111, 548, 2049]})
+        self.assertTrue(exact)
+        self.assertEqual(sum("NFS" in step for step in steps), 1)
+        self.assertTrue(any("AFP" in step for step in steps))
+        self.assertFalse(any("MariaDB" in step or "FTP" in step for step in steps))
+        steps, _, _ = security.device_steps(check, {"ports": [21, 3306]})
+        self.assertTrue(any("FTP" in step for step in steps))
+        self.assertTrue(any("MariaDB" in step for step in steps))
+
     def test_missing_raw_is_not_clean(self):
         sec = self.run_checks(self.net(), onvif=False, smb=False)
         self.assertFalse(sec["evaluated"]["CAMERA_ONVIF_ANON"])
@@ -2197,6 +2209,44 @@ class AskAiTest(unittest.TestCase):
             d["identity"].update(conflicts=[], notes=[], rules=[], os=None)
         page = render(m)
         self.assertIn('id="askai" data-askai="', page)
+
+    def test_advice_buttons_use_only_relevant_anonymous_context(self):
+        import html
+        import json
+
+        from lanmap.report import render
+
+        m = self.model()
+        for d in m["devices"]:
+            d["actions"] = []
+            d["identity"].update(conflicts=[], notes=[], rules=[], os=None)
+        m["devices"][1]["contested"] = [{"ip": "192.0.2.20", "observations": [
+            {"mac": m["devices"][1]["key"], "source": "arp"},
+            {"mac": m["devices"][2]["key"], "source": "router"},
+        ]}]
+        telnet = next(f for f in m["security"]["findings"] if f["id"] == "TELNET_OPEN")
+        telnet["checked"] = {"result": "unknown", "detail": "private-recheck"}
+        m["security"]["skipped"]["ADB_EXPOSED"] = "ошибка проверки: private-error"
+        m["meta"]["passport"] = [{"id": "ports", "status": "partial", "detail": "private-error"}]
+        page = render(m)
+        prompts = [json.loads(html.unescape(value)) for value in re.findall(r'data-advice="([^"]+)"', page)]
+
+        def prompt(prefix):
+            return next(p for p in prompts if p["context"].startswith(prefix))
+
+        context = prompt("Находка TELNET_OPEN")["context"]
+        self.assertIn("У2 — Камера", context)
+        self.assertIn("порт 23", context)
+        self.assertIn("нечем проверить", context)
+        self.assertNotIn("У3", context)
+        self.assertIn("Проверка завершилась ошибкой", prompt("Проверка ADB_EXPOSED")["context"])
+        self.assertIn("прошивок", prompt("Критерий E6")["task"])
+        self.assertIn("в отдельную папку", prompt("Критерий E8")["task"])
+        self.assertIn("Порты", prompt("Срез LanMap неполный")["context"])
+        self.assertIn("ARP", prompt("У LanMap есть сведения")["context"])
+        for p in prompts:
+            for secret in (*self.SECRETS, "private-recheck", "private-error"):
+                self.assertNotIn(secret.lower(), p["context"].lower(), secret)
 
 
 def smb1_reply(words: int, index: int, status: int = 0) -> bytes:
