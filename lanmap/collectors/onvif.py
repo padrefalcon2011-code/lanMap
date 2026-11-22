@@ -94,10 +94,14 @@ def envelope(action: str, inner: str = "", header: str = "") -> bytes:
 
 def _same_host(url: str, ip: str) -> str | None:
     """Адрес из ответа камеры, переписанный на проверенный IP (порт и путь — как у камеры). Только http."""
-    parts = urllib.parse.urlsplit(url)
-    if parts.scheme not in ("http", "https") or not parts.path and not parts.query:
+    try:
+        parts = urllib.parse.urlsplit(str(url or ""))
+        port = parts.port
+    except ValueError:  # «http://[», порт не число или больше 65535
         return None
-    netloc = ip if parts.port is None else f"{ip}:{parts.port}"
+    if parts.scheme not in ("http", "https") or not parts.path and not parts.query or port == 0:
+        return None
+    netloc = ip if port is None else f"{ip}:{port}"
     return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path or "/", parts.query, ""))
 
 
@@ -118,7 +122,7 @@ def with_owner_creds(url: str, user: str, password: str) -> str:
 
 def leaks_password(uri: str) -> bool:
     """Камера сама вписала непустой пароль в адрес кадра. Значение не читается и не сохраняется."""
-    query = urllib.parse.parse_qsl(urllib.parse.urlsplit(uri).query, keep_blank_values=True)
+    query = urllib.parse.parse_qsl(str(uri or "").split("#", 1)[0].partition("?")[2], keep_blank_values=True)
     return any(k.lower() in PASSWORD_KEYS and v for k, v in query)
 
 

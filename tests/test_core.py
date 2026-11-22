@@ -1271,6 +1271,45 @@ def igd_entry(port, to_ip, to_port, proto="TCP", enabled="1"):
             "NewLeaseDuration": 0}
 
 
+class BrokenAnnounceTest(unittest.TestCase):
+    """Кривой анонс одного устройства пропускается, а не обрывает срез (scan.announced_ports — на его пути)."""
+    CTX = ScanContext(local_ip="192.0.2.50", network="192.0.2.0/24", gateway="192.0.2.1", if_index=0)
+    BAD = ["http://[", "http://192.0.2.7:99999/desc.xml", "http://192.0.2.7:abc/", "http://192.0.2.7:0/",
+           "ftp://192.0.2.7/desc.xml", "http:///nohost"]
+
+    def ssdp(self, *locations):
+        return [{"ip": "192.0.2.7", "response": f"HTTP/1.1 200 OK\r\nLOCATION: {loc}\r\n"} for loc in locations]
+
+    def test_url_target(self):
+        from lanmap.collectors import url_target
+        for url in self.BAD + [None, 42, ""]:
+            self.assertIsNone(url_target(url), url)
+        self.assertEqual(url_target("https://192.0.2.7/x"), ("192.0.2.7", 443))
+        self.assertEqual(url_target("http://192.0.2.7:8080/x"), ("192.0.2.7", 8080))
+
+    def test_announced_ports_skip_bad(self):
+        from lanmap import scan
+        multi = {"ssdp": self.ssdp(*self.BAD, "http://192.0.2.8:49152/rootDesc.xml", "http://198.51.100.9:80/x"),
+                 "mdns": [{"records": [{"type": dnswire.TYPE_SRV, "name": "x", "value": {"port": 70000, "target": "h"}},
+                                       {"type": dnswire.TYPE_SRV, "name": "y", "value": None},
+                                       {"type": dnswire.TYPE_A, "name": "h", "value": "192.0.2.9"}]}]}
+        self.assertEqual(scan.announced_ports(multi, self.CTX), {"192.0.2.8": {49152}})
+
+    def test_wsd_and_onvif_targets_skip_bad(self):
+        from lanmap.collectors import protocols
+        wsd = [{"xml": "<d:XAddrs>http://[ http://192.0.2.7:99999/onvif/device_service "
+                       "http://192.0.2.7/onvif/device_service</d:XAddrs>"}]
+        self.assertEqual(protocols.wsd_xaddrs(wsd), ["http://192.0.2.7/onvif/device_service"])
+        self.assertEqual(protocols.onvif_targets(self.CTX, wsd, {}), ["http://192.0.2.7/onvif/device_service"])
+
+    def test_bad_control_url_skipped(self):
+        from lanmap.collectors import igd
+        body = IGD_DESC.replace("<URLBase>", "<URLBase>http://[") if "<URLBase>" in IGD_DESC else IGD_DESC
+        igd.wan_services(body, "http://[")  # не бросает
+        self.assertEqual(igd.collect(self.CTX, [{"url": "http://[", "ip": "192.0.2.1", "body": IGD_DESC}],
+                                     post=FakeGateway([])), {"gateways": []})
+
+
 class IgdTest(unittest.TestCase):
     CTX = ScanContext(local_ip="192.0.2.50", network="192.0.2.0/24", gateway="192.0.2.1", if_index=0)
     DESC = [{"url": "http://192.0.2.1:1900/rootDesc.xml", "ip": "192.0.2.1", "body": IGD_DESC}]

@@ -11,7 +11,7 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 
-from lanmap.collectors import USER_AGENT, ScanContext
+from lanmap.collectors import USER_AGENT, ScanContext, url_target
 from lanmap.collectors import dnswire
 
 UPNP_FIELDS = ("friendlyName", "manufacturer", "manufacturerURL", "modelName", "modelNumber",
@@ -29,7 +29,7 @@ class _LocalOnlyRedirect(urllib.request.HTTPRedirectHandler):
         self.ctx = ctx
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not self.ctx.in_scope(urllib.parse.urlparse(newurl).hostname):
+        if not self.ctx.url_in_scope(newurl):
             return None
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
@@ -40,8 +40,8 @@ def _opener(ctx: ScanContext):
 
 def http_get(ctx: ScanContext, url: str, limit: int = 200_000) -> dict:
     """GET только по адресам своей подсети. Для XML — разбор полей UPnP."""
-    if not ctx.in_scope(urllib.parse.urlparse(url).hostname):
-        return {"url": url, "error": "адрес вне локальной подсети — пропущен"}
+    if not ctx.url_in_scope(url):
+        return {"url": url, "error": "адрес вне локальной подсети или непонятный — пропущен"}
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         with _opener(ctx).open(req, timeout=4) as resp:
@@ -68,17 +68,20 @@ def http_get(ctx: ScanContext, url: str, limit: int = 200_000) -> dict:
 
 
 def ssdp_locations(ssdp: list[dict]) -> dict[str, str]:
-    """URL описаний UPnP из ответов SSDP (только своя подсеть) → IP, приславший ответ."""
+    """URL описаний UPnP из ответов SSDP → IP, приславший ответ. Только http(s) с разборчивым хостом и портом
+    (url_target): кривой LOCATION одного устройства пропускается. Своя ли подсеть — решает вызывающий."""
     urls: dict[str, str] = {}
     for entry in ssdp:
-        match = re.search(r"^location:\s*(\S+)", entry.get("response", ""), re.I | re.M)
-        if match:
-            urls.setdefault(match[1], entry["ip"])
+        if not isinstance(entry, dict):
+            continue
+        match = re.search(r"^location:\s*(\S+)", str(entry.get("response", "")), re.I | re.M)
+        if match and url_target(match[1]):
+            urls.setdefault(match[1], entry.get("ip"))
     return urls
 
 
 def upnp_descriptions(ctx: ScanContext, ssdp: list[dict]) -> list[dict]:
-    urls = {u: ip for u, ip in ssdp_locations(ssdp).items() if ctx.in_scope(urllib.parse.urlparse(u).hostname)}
+    urls = {u: ip for u, ip in ssdp_locations(ssdp).items() if ctx.url_in_scope(u)}
     with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
         results = list(pool.map(lambda u: http_get(ctx, u), sorted(urls)))
     for item in results:
@@ -94,9 +97,9 @@ _ONVIF_BODY = (b'<?xml version="1.0" encoding="UTF-8"?><s:Envelope xmlns:s="http
 
 def onvif_info(ctx: ScanContext, url: str) -> dict:
     """GetDeviceInformation без учётных данных. Многие камеры отвечают анонимно."""
-    host = urllib.parse.urlparse(url).hostname
-    out: dict = {"ip": host, "url": url, "operation": "GetDeviceInformation (без пароля)"}
-    if not ctx.in_scope(host):
+    target = ctx.url_in_scope(url)
+    out: dict = {"ip": target[0] if target else None, "url": url, "operation": "GetDeviceInformation (без пароля)"}
+    if not target:
         out["error"] = "адрес вне локальной подсети — пропущен"
         return out
     req = urllib.request.Request(url, data=_ONVIF_BODY, headers={
@@ -118,19 +121,22 @@ def onvif_info(ctx: ScanContext, url: str) -> dict:
 
 
 def wsd_xaddrs(wsd: list[dict]) -> list[str]:
+    """Адреса служб из ответов WS-Discovery. Только разборчивые http(s) (url_target), кривые пропускаются."""
     urls = []
     for entry in wsd:
-        for block in re.findall(r"<[^>]*XAddrs>([^<]+)<", entry.get("xml", "")):
-            urls.extend(block.split())
+        if not isinstance(entry, dict):
+            continue
+        for block in re.findall(r"<[^>]*XAddrs>([^<]+)<", str(entry.get("xml", ""))):
+            urls.extend(u for u in block.split() if url_target(u))
     return urls
 
 
 def onvif_targets(ctx: ScanContext, wsd: list[dict], open_ports: dict[str, list[int]]) -> list[str]:
     targets: dict[str, str] = {}
     for url in wsd_xaddrs(wsd):
-        host = urllib.parse.urlparse(url).hostname
-        if ctx.in_scope(host) and "onvif" in url.lower():
-            targets.setdefault(host, url)
+        target = ctx.url_in_scope(url)
+        if target and "onvif" in url.lower():
+            targets.setdefault(target[0], url)
     for ip, ports in open_ports.items():
         if ip in targets:
             continue

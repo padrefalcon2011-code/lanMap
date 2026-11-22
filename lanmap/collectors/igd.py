@@ -18,7 +18,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Callable
 
-from lanmap.collectors import USER_AGENT, ScanContext
+from lanmap.collectors import USER_AGENT, ScanContext, url_target
 
 READ_ONLY_ACTIONS = frozenset({"GetGenericPortMappingEntry", "GetExternalIPAddress"})
 WAN_SERVICES = ("WANIPConnection", "WANPPPConnection")
@@ -55,7 +55,12 @@ def wan_services(body: str, desc_url: str) -> list[dict]:
             continue
         stype = _child(el, "serviceType")
         if any(f":service:{name}:" in stype for name in WAN_SERVICES) and _child(el, "controlURL"):
-            out.append({"service": stype, "control_url": urllib.parse.urljoin(base, _child(el, "controlURL"))})
+            try:
+                control = urllib.parse.urljoin(base, _child(el, "controlURL"))
+            except ValueError:  # кривой URLBase или controlURL — эту службу пропускаем
+                continue
+            if url_target(control):
+                out.append({"service": stype, "control_url": control})
     # WANIPConnection предпочтительнее, затем по версии (2 раньше 1)
     out.sort(key=lambda s: ("WANPPPConnection" in s["service"], -int(s["service"].rsplit(":", 1)[-1] or 0)))
     return out
@@ -136,12 +141,11 @@ def collect(ctx: ScanContext, descriptions: list[dict], post: Poster | None = No
     for d in descriptions:
         if not d.get("body"):
             continue
-        svcs = [s for s in wan_services(d["body"], d["url"])
-                if ctx.in_scope(urllib.parse.urlparse(s["control_url"]).hostname)]
+        svcs = [s for s in wan_services(d["body"], d["url"]) if ctx.url_in_scope(s["control_url"])]
         if not svcs or svcs[0]["control_url"] in seen:
             continue
         seen.add(svcs[0]["control_url"])
-        gateways.append(read_gateway(post, d.get("ip") or urllib.parse.urlparse(d["url"]).hostname, d["url"], svcs[0]))
+        gateways.append(read_gateway(post, d.get("ip") or (url_target(d["url"]) or (None,))[0], d["url"], svcs[0]))
     return {"gateways": gateways}
 
 

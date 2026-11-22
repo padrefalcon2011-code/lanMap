@@ -5,7 +5,6 @@ import asyncio
 import concurrent.futures
 import datetime as dt
 import time
-import urllib.parse
 from pathlib import Path
 
 from lanmap import __version__, netinfo, snapshot
@@ -37,17 +36,19 @@ def new_snapshot_dir() -> Path:
 def announced_ports(multi: dict, ctx: ScanContext) -> dict[str, set[int]]:
     """Порты, которые устройства сами объявили в mDNS (SRV) и SSDP (LOCATION)."""
     extra: dict[str, set[int]] = {}
-    records = [r for pkt in multi.get("mdns", []) for r in pkt["records"]]
-    host_ip = {r["name"].lower(): r["value"] for r in records if r["type"] == dnswire.TYPE_A}
+    records = [r for pkt in multi.get("mdns", []) for r in pkt.get("records") or [] if isinstance(r, dict)]
+    host_ip = {str(r.get("name")).lower(): r.get("value") for r in records if r.get("type") == dnswire.TYPE_A}
     for r in records:
-        if r["type"] == dnswire.TYPE_SRV and r["value"]["port"]:
-            ip = host_ip.get(r["value"]["target"].lower())
-            if ctx.in_scope(ip):
-                extra.setdefault(ip, set()).add(r["value"]["port"])
-    for url, ip in protocols.ssdp_locations(multi.get("ssdp", [])).items():
-        parsed = urllib.parse.urlparse(url)
-        if ctx.in_scope(parsed.hostname):
-            extra.setdefault(parsed.hostname, set()).add(parsed.port or 80)
+        value = r.get("value")
+        if r.get("type") != dnswire.TYPE_SRV or not isinstance(value, dict):
+            continue
+        port, ip = value.get("port"), host_ip.get(str(value.get("target")).lower())
+        if isinstance(port, int) and 1 <= port <= 65535 and isinstance(ip, str) and ctx.in_scope(ip):
+            extra.setdefault(ip, set()).add(port)
+    for url in protocols.ssdp_locations(multi.get("ssdp", [])):
+        target = ctx.url_in_scope(url)  # кривой LOCATION пропускается, срез не обрывается
+        if target:
+            extra.setdefault(target[0], set()).add(target[1])
     return extra
 
 
