@@ -9,6 +9,7 @@ import queue
 import threading
 import webbrowser
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 
 from lanmap import monitor, server
 from lanmap.util import UserError
@@ -24,6 +25,10 @@ NIN_BALLOONUSERCLICK = 0x0405
 NIM_ADD, NIM_MODIFY, NIM_DELETE, NIM_SETFOCUS, NIM_SETVERSION = range(5)
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 1, 2, 4, 16
 CMD_REPORT, CMD_JOURNAL, CMD_PAUSE, CMD_QUIT = range(1, 5)
+ICON_PATH = Path(__file__).with_name("tray.ico")
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x0010
+SM_CXSMICON, SM_CYSMICON = 49, 50
 
 WNDPROC = c.WINFUNCTYPE(c.c_ssize_t, w.HWND, w.UINT, w.WPARAM, w.LPARAM)
 
@@ -63,7 +68,10 @@ _destroy_window = _bind(_user, "DestroyWindow", w.BOOL, w.HWND)
 _default = _bind(_user, "DefWindowProcW", c.c_ssize_t, w.HWND, w.UINT, w.WPARAM, w.LPARAM)
 _register_message = _bind(_user, "RegisterWindowMessageW", w.UINT, w.LPCWSTR)
 _allow_message = _bind(_user, "ChangeWindowMessageFilterEx", w.BOOL, w.HWND, w.UINT, w.DWORD, c.c_void_p)
+_system_metric = _bind(_user, "GetSystemMetrics", c.c_int, c.c_int)
+_load_image = _bind(_user, "LoadImageW", w.HANDLE, w.HINSTANCE, w.LPCWSTR, w.UINT, c.c_int, c.c_int, w.UINT)
 _load_icon = _bind(_user, "LoadIconW", w.HICON, w.HINSTANCE, c.c_void_p)
+_destroy_icon = _bind(_user, "DestroyIcon", w.BOOL, w.HICON)
 _peek = _bind(_user, "PeekMessageW", w.BOOL, c.POINTER(w.MSG), w.HWND, w.UINT, w.UINT, w.UINT)
 _translate = _bind(_user, "TranslateMessage", w.BOOL, c.POINTER(w.MSG))
 _dispatch = _bind(_user, "DispatchMessageW", c.c_ssize_t, c.POINTER(w.MSG))
@@ -242,8 +250,14 @@ class Tray:
             cleanup.callback(setattr, self, "hwnd", None)
             _allow_message(hwnd, self.taskbar_created, 1, None)  # Explorer может быть без повышения прав.
             _allow_message(hwnd, WM_TRAY, 1, None)
+            icon = _load_image(None, str(ICON_PATH), IMAGE_ICON,
+                               _system_metric(SM_CXSMICON), _system_metric(SM_CYSMICON), LR_LOADFROMFILE)
+            if icon:
+                cleanup.callback(_destroy_icon, icon)
+            else:
+                icon = _load_icon(None, 32512)  # IDI_APPLICATION, системный запасной значок.
             self.icon = NotifyIcon(size=c.sizeof(NotifyIcon), window=hwnd, id=1, callback_message=WM_TRAY,
-                                   icon=_load_icon(None, 32512), tip="LanMap · Присмотр за сетью")
+                                   icon=icon, tip="LanMap · Присмотр за сетью")
             if not self._add_icon():
                 raise UserError("Не удалось добавить значок LanMap в область уведомлений Windows.")
             cleanup.callback(_notify_icon, NIM_DELETE, c.byref(self.icon))
