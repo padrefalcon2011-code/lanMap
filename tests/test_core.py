@@ -537,6 +537,17 @@ class LinkTestTest(unittest.TestCase):
                 ops.link_test("192.0.2.10", seconds=1)
 
 
+class LinkTargetTest(unittest.TestCase):
+    def test_own_ip_not_shared_factory_address(self):
+        """«Тест связи» меряет адрес самого устройства, а не общий заводской адрес камер."""
+        from lanmap.report import _own_ip
+        cam = {"ips": ["192.0.2.10", "192.0.2.57"], "contested": [{"ip": "192.0.2.10", "observations": []}]}
+        self.assertEqual(_own_ip(cam), "192.0.2.57")
+        self.assertEqual(_own_ip({**cam, "contested": [], "router": {"ip": "192.0.2.57"}}), "192.0.2.57")
+        self.assertEqual(_own_ip({"ips": ["192.0.2.10"], "contested": [{"ip": "192.0.2.10"}]}), "192.0.2.10")
+        self.assertIsNone(_own_ip({"ips": []}))
+
+
 class HistoryTest(unittest.TestCase):
     def test_marks_across_snapshots(self):
         """Календарь: по срезу — в сети / известно / не было; чужая сеть, прерванный и несобранный не в счёт."""
@@ -1358,6 +1369,17 @@ class ServerTest(unittest.TestCase):
         import json
         code, _, text = self.req("POST", path, body, {"X-LanMap-Token": token})
         return code, json.loads(text)
+
+    def test_network_routes_need_token_and_local_ip(self):
+        """ARP-перепроверка и тест связи шлют пакеты в сеть: только с токеном и только в свою подсеть."""
+        from unittest import mock
+        from lanmap import ops
+        for route in ("/api/ipcheck", "/api/link"):
+            self.assertEqual(self.api(route, {"ip": "192.0.2.10"}, token="wrong")[0], 403)
+        net = mock.Mock(local_ip="192.0.2.5", network="192.0.2.0/24", gateway="192.0.2.1", if_index=1, mac=None)
+        with mock.patch.object(ops, "pick_network", lambda: net):
+            for route in ("/api/ipcheck", "/api/link"):
+                self.assertEqual(self.api(route, {"ip": "198.51.100.7"})[0], 400)
 
     def test_page_needs_token_and_host(self):
         self.assertEqual(self.req("GET", "/")[0], 403)

@@ -260,8 +260,9 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
         acts.insert(1 if dev.get("mac") else 0,
                     f'<button class="act live-only" data-snap="{e(dev["key"])}" title="Стоп-кадр с камеры по ONVIF: '
                     f'видно, куда она смотрит. Пароль камеры вводишь ты">{icon("camera", "s")}<span class="lbl">Кадр</span></button>')
-    if dev["ips"] and not dev.get("is_local") and dev.get("alive"):
-        acts.append(f'<button class="act live-only" data-link="{e(dev["ips"][0])}" title="Минуту пинговать устройство и роутер: '
+    target = _own_ip(dev)
+    if target and not dev.get("is_local") and dev.get("alive"):
+        acts.append(f'<button class="act live-only" data-link="{e(target)}" title="Минуту пинговать устройство и роутер: '
                     f'где теряется связь">{icon("wifi3", "s")}<span class="lbl">Тест связи</span></button>')
     acts.append(f'<button class="act" data-share="{live(share_mod.payload(dev))}" title="Обезличенный рассказ об устройстве '
                 f'для заявки на GitHub: так LanMap научится его узнавать">{icon("question", "s")}'
@@ -307,6 +308,17 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
     return (f'<div class="tdetail" hidden>{head}<div class="dgrid"><div class="facts">{facts_html}</div>'
             f'<div class="ports">{ports}</div></div>{slines}<div class="acts">{"".join(acts)}</div>'
             f'<div class="linkres" hidden></div>{why}</div>')
+
+
+def _own_ip(dev: dict) -> str | None:
+    """Адрес, который точно принадлежит устройству: выданный роутером, иначе первый неспорный.
+    Общий заводской адрес камер (спорный) отвечает за кого попало — по нему не мерить."""
+    ips = dev.get("ips") or []
+    rip = (dev.get("router") or {}).get("ip")
+    if rip in ips:
+        return rip
+    contested = {c["ip"] for c in dev.get("contested") or []}
+    return next((ip for ip in ips if ip not in contested), ips[0] if ips else None)
 
 
 def _day(stamp: str | None) -> str:
