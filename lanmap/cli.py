@@ -76,10 +76,13 @@ def cmd_scan(args) -> int:
 
 def _finish_build(build, snap: Path, open_report: bool, baseline: Path | None = None) -> int:
     from lanmap import changes
+    from lanmap.build import output_dir
     model = build(snap, baseline)
     devs = model["devices"]
     sure = sum(1 for d in devs if d["identity"]["confidence"] >= 3)
-    report = snap / "report.html"
+    report = output_dir(snap) / "report.html"
+    if report.parent.resolve() != snap.resolve():
+        print(f"Срез вне каталога данных: он только читается, отчёт — в {report.parent}")
     diff = model.get("changes")
     if diff:
         print(diff["error"] if diff.get("error") else changes.summary(diff))

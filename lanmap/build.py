@@ -78,8 +78,22 @@ def make_model(snapshot: Path, reg: dict | None = None) -> dict:
     return model
 
 
+def output_dir(snapshot: Path) -> Path:
+    """Куда писать devices.json и report.html: в папку среза, если она внутри каталога данных.
+
+    Срез, лежащий вне него (принесли с другого компьютера), — только источник: в его папке производные файлы
+    с MAC и адресами не защищены .gitignore, поэтому они пишутся в data/external/<имя среза>."""
+    snapshot = Path(snapshot).resolve()
+    data = data_dir().resolve()
+    if snapshot.is_relative_to(data):
+        return snapshot
+    out = data / "external" / snapshot.name
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 def build(snapshot: Path, baseline: Path | None = None) -> dict:
-    """Модель + сравнение с прошлым (или указанным) срезом → devices.json и report.html в папке среза."""
+    """Модель + сравнение с прошлым (или указанным) срезом → devices.json и report.html (папка — output_dir)."""
     snapshot = Path(snapshot)
     reg = registry.load()
     model = make_model(snapshot, reg)
@@ -92,6 +106,7 @@ def build(snapshot: Path, baseline: Path | None = None) -> dict:
             model["changes"] = changes.compare(old, model, changes.tested_ports(baseline), changes.tested_ports(snapshot))
         except Exception as exc:  # сравнение — дополнительный блок, отчёт без него всё равно нужен
             model["changes"] = {"error": f"Не удалось сравнить со срезом {baseline.name}: {exc}", "baseline": baseline.name}
-    write_json(snapshot / "devices.json", model)
-    (snapshot / "report.html").write_text(render(model), encoding="utf-8")
+    out = output_dir(snapshot)
+    write_json(out / "devices.json", model)
+    (out / "report.html").write_text(render(model), encoding="utf-8")
     return model

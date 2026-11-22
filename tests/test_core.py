@@ -74,6 +74,25 @@ class CertTest(unittest.TestCase):
         self.assertEqual(list((data_dir() / tcp.CERT_TMP).glob("*.pem")), [])
 
 
+class ExternalBuildTest(unittest.TestCase):
+    def test_external_snapshot_is_only_read(self):
+        """build по срезу вне каталога данных: его папка не трогается, отчёт — в data/external."""
+        from lanmap.build import build, output_dir
+        from lanmap.util import data_dir
+        with tempfile.TemporaryDirectory() as outside:
+            snap = Path(outside) / "2026-01-03_000000"
+            write_json(snap / "meta.json", {"interface": {"local_ip": "192.0.2.5", "network": "192.0.2.0/24"}})
+            write_json(snap / "raw" / "ping.json", {"192.0.2.10": {"alive": True}})
+            before = sorted(p.relative_to(snap) for p in snap.rglob("*"))
+            build(snap)
+            self.assertEqual(sorted(p.relative_to(snap) for p in snap.rglob("*")), before)
+            out = data_dir() / "external" / snap.name
+            self.assertEqual(output_dir(snap), out.resolve())
+            self.assertTrue((out / "report.html").exists() and (out / "devices.json").exists())
+        inside = data_dir() / "snapshots" / "2026-01-03_000001"
+        self.assertEqual(output_dir(inside), inside.resolve())
+
+
 class DnsTest(unittest.TestCase):
     def test_roundtrip(self):
         name = dnswire.encode_name("cam._http._tcp.local")
