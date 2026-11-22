@@ -244,6 +244,19 @@ class CertExpiryTest(unittest.TestCase):
         self.assertNotIn("сертификат HTTPS", _flags(far))
 
 
+class StaleReportTest(unittest.TestCase):
+    def test_age_chip_and_threshold(self):
+        """Возраст среза считает страница при открытии: в шапке — дата среза, в «О срезе» — порог владельца."""
+        from lanmap.build import build
+        from lanmap.report import STALE_DAYS, render
+        snap = finish_snapshot(Path(tempfile.mkdtemp(dir=TMP.name)) / "2026-01-06_000000",
+                               started="2026-01-06T10:00:00+03:00", interface={"network": "192.0.2.0/24"})
+        page = render(build(snap))
+        self.assertIn('id="age" data-started="2026-01-06T10:00:00+03:00" hidden', page)
+        self.assertIn(f'<option value="{STALE_DAYS}" selected>', page)
+        self.assertIn("store.get('stale')", page)
+
+
 class DnsTest(unittest.TestCase):
     def test_roundtrip(self):
         name = dnswire.encode_name("cam._http._tcp.local")

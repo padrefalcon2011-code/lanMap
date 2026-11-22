@@ -942,7 +942,19 @@ def _about(model: dict) -> str:
             else f'<span class="pc good">{icon("check", "s")}полная</span>')
     return (f'<details class="about"><summary>{icon("info", "s")}О срезе{" · " + e(short) if short else ""} {flag}</summary>'
             f'<div class="abody">{wl}<div class="agrid">{rows}</div>{stages}'
+            f'{_stale_setting()}'
             f'<p class="muted">LanMap только читает сеть и ничего не меняет на устройствах.</p></div></details>')
+
+
+STALE_DAYS = 7  # через столько дней по умолчанию отчёт напоминает о новом срезе
+STALE_CHOICES = (1, 3, 7, 14, 30)
+
+
+def _stale_setting() -> str:
+    """Порог «пора обновить срез»: выбирает владелец, хранится в браузере (возраст считается при открытии)."""
+    opts = "".join(f'<option value="{d}"{" selected" if d == STALE_DAYS else ""}>{d} дн.</option>' for d in STALE_CHOICES)
+    return (f'<label class="stale">{icon("refresh", "s")}<span>Напоминать о новом срезе через</span>'
+            f'<select id="stale">{opts}<option value="0">не напоминать</option></select></label>')
 
 
 def _summary(model: dict) -> str:
@@ -1061,6 +1073,7 @@ def render(model: dict) -> str:
   <div class="top">
     <h1>{icon("devices", "l")}Сеть {e(iface.get('network', '?'))}</h1>
     <span class="when">{e(started)}</span>
+    <button class="age" id="age" data-started="{e(meta.get("started", ""))}" hidden>{icon("refresh", "s")}<span></span></button>
     <span class="spacer"></span>
     <span id="scanst" class="scanst" hidden></span>
     <button class="iconbtn live-only findbtn" id="find" {tip("Найти устройство: выключи или включи его — увидишь, какое это")}>{icon("search", "s")}<span>Найти устройство</span></button>

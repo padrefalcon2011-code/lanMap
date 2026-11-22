@@ -82,6 +82,11 @@ button{font:inherit;color:inherit}
 .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .top h1{margin:0;font-size:20px;display:flex;align-items:center;gap:8px}
 .top .when{color:var(--muted);font-size:13px}
+.age{display:inline-flex;align-items:center;gap:5px;border:0;border-radius:999px;padding:3px 10px;font:inherit;
+ font-size:12px;font-weight:600;background:var(--warn-soft);color:var(--warn-text);cursor:pointer}
+.age[hidden]{display:none}.age:hover{outline:1px solid var(--warn)}
+.stale{display:flex;align-items:center;gap:7px;flex-wrap:wrap;color:var(--muted)}
+.stale select{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:2px 6px}
 .top .spacer{flex:1}
 .iconbtn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);background:var(--card);
 border-radius:8px;height:32px;min-width:32px;padding:0 8px;cursor:pointer;color:var(--fg)}
@@ -737,6 +742,21 @@ if(askBtn)askBtn.addEventListener('click',()=>{
 // всплывающие заметки: закрывать по клику мимо
 document.addEventListener('click',e=>{$$('details.more[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});
 sync();
+
+// «Пора обновить срез»: возраст считается при открытии отчёта, порог владельца — в «О срезе» (хранится в браузере)
+(function(){const b=$('#age'),sel=$('#stale');if(!b)return;
+ const t=Date.parse(b.dataset.started);
+ const limit=()=>{const v=store.get('stale');return v===null?+(sel?sel.value:7):+v;};
+ if(sel&&store.get('stale')!==null)sel.value=store.get('stale');
+ function show(){const days=Math.floor((Date.now()-t)/864e5),lim=limit();
+  const stale=!isNaN(days)&&lim>0&&days>=lim;b.hidden=!stale;if(!stale)return;
+  b.querySelector('span').textContent=`срезу ${days} дн.`;
+  b.title=`Срез сделан ${days} дн. назад — сеть могла измениться. `+(window.LANMAP?'Нажми, чтобы сделать новый срез.'
+   :'Новый срез: python -m lanmap scan')+' Порог — в «О срезе».';}
+ if(sel)sel.addEventListener('change',()=>{store.set('stale',sel.value);show();});
+ b.addEventListener('click',()=>{const s=$('#scan');if(window.LANMAP&&s)s.click();else{const a=$('details.about');
+  if(a){a.open=true;a.scrollIntoView({block:'nearest'});}}});
+ show();})();
 
 // веб-интерфейс (python -m lanmap serve): кнопки вместо команд. Без сервера (файл отчёта) ничего не делает.
 const L=window.LANMAP;
