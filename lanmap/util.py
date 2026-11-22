@@ -64,11 +64,71 @@ def now_iso() -> str:
     return _dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def read_json(path: Path, default: Any = None) -> Any:
+class UserError(ValueError):
+    """Понятная человеку ошибка: командная строка печатает её, сервер отдаёт кодом 400 (ops.OpError — она же)."""
+
+
+class BadJSON(UserError):
+    """Файл есть, но это не JSON (испорчен, недописан, не UTF-8). В тексте — путь и место ошибки."""
+
+    def __init__(self, path: Path, reason: str, backup: Path | None = None):
+        self.path, self.reason, self.backup = Path(path), reason, backup
+        text = f"Файл {self.path} повреждён: {reason}."
+        if backup:
+            text += (f" Копия испорченного файла: {backup}. Исправь файл или удали его — тогда программа начнёт"
+                     " с пустого. Пока он повреждён, LanMap его не перезаписывает.")
+        super().__init__(text)
+
+
+def _parse(path: Path) -> Any:
     try:
-        return json.loads(Path(path).read_text("utf-8-sig"))
+        return json.loads(path.read_text("utf-8-sig"))
+    except UnicodeDecodeError:
+        raise BadJSON(path, "это не текст UTF-8") from None
+    except json.JSONDecodeError as exc:
+        raise BadJSON(path, f"строка {exc.lineno}, столбец {exc.colno}: {exc.msg}") from None
+
+
+def read_json(path: Path, default: Any = None) -> Any:
+    """JSON из файла; нет файла — default. Испорченный файл — BadJSON с путём и местом ошибки."""
+    try:
+        return _parse(Path(path))
     except FileNotFoundError:
         return default
+
+
+def _backup(path: Path) -> Path:
+    """Копия испорченного файла рядом: <имя>.broken-<время><расширение>. Такая же копия уже есть — её и вернуть."""
+    body = path.read_bytes()
+    for old in sorted(path.parent.glob(f"{path.stem}.broken-*{path.suffix}")):
+        try:
+            if old.read_bytes() == body:
+                return old
+        except OSError:
+            continue
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    out = path.with_name(f"{path.stem}.broken-{stamp}{path.suffix}")
+    n = 2
+    while out.exists():
+        out = path.with_name(f"{path.stem}.broken-{stamp}-{n}{path.suffix}")
+        n += 1
+    out.write_bytes(body)
+    return out
+
+
+def read_state(path: Path, default: Any = None) -> Any:
+    """Состояние владельца (реестр, отметки, свои правила): как read_json, но испорченный файл сначала
+    копируется рядом (_backup), а ошибка называет копию. Пустым он не заменяется: все записи состояния
+    читают файл перед записью, и ошибка чтения останавливает запись."""
+    path = Path(path)
+    try:
+        return read_json(path, default)
+    except BadJSON as exc:
+        try:
+            backup = _backup(path)
+        except OSError:
+            raise exc from None
+        raise BadJSON(path, exc.reason, backup) from None
 
 
 def write_json(path: Path, data: Any) -> None:

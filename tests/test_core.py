@@ -390,6 +390,50 @@ class RegistryTest(unittest.TestCase):
         self.assertIsNone(registry.entry_by_ip(data, ["192.0.2.10"]))  # неоднозначно — не угадываем
 
 
+class BrokenStateTest(unittest.TestCase):
+    """Испорченный JSON: ошибка с путём и местом, копия рядом, оригинал не заменяется пустым."""
+
+    def setUp(self):
+        from lanmap import security
+        self.path = security.statuses_path()
+        self.body = '{"findings": {"x|y": {"status": "fixed"}'  # недописан
+        self.path.write_text(self.body, "utf-8")
+        self.addCleanup(self._clean)
+
+    def _clean(self):
+        for f in self.path.parent.glob("findings*.json"):
+            f.unlink()
+
+    def test_backup_and_no_overwrite(self):
+        from lanmap import ops, security
+        from lanmap.util import BadJSON
+        with self.assertRaises(BadJSON) as cm:
+            security.load_statuses()
+        self.assertIn(str(self.path), str(cm.exception))
+        self.assertIn("строка 1", str(cm.exception))
+        backup = cm.exception.backup
+        self.assertEqual(backup.read_text("utf-8"), self.body)
+        # запись тоже читает файл первой: падает, оригинал цел
+        with self.assertRaises(ops.OpError):
+            security.set_status(security.CHECKS[0].id, MAC_B, "accepted")
+        self.assertEqual(self.path.read_text("utf-8"), self.body)
+        # та же порча — та же копия, без новых файлов
+        with self.assertRaises(BadJSON) as again:
+            security.load_statuses()
+        self.assertEqual(again.exception.backup, backup)
+        self.assertEqual(len(list(self.path.parent.glob("findings.broken-*.json"))), 1)
+
+    def test_raw_file_names_path(self):
+        from lanmap.util import BadJSON
+        bad = Path(TMP.name) / "bad.json"
+        bad.write_bytes(b"\xff\xfe\x00")
+        self.addCleanup(bad.unlink)
+        with self.assertRaises(BadJSON) as cm:
+            read_json(bad, {})
+        self.assertIn(str(bad), str(cm.exception))
+        self.assertIsNone(cm.exception.backup)  # сырые файлы срезов не копируем
+
+
 class RouterTest(unittest.TestCase):
     def test_clean_label(self):
         from lanmap.routers.keenetic import clean_label

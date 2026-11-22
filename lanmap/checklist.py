@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from lanmap import security as sec_mod
-from lanmap.util import data_dir, now_iso, read_json, write_json
+from lanmap.util import data_dir, now_iso, read_state, write_json
 
 OWNER = {"E6", "E8"}
 OWNER_HINTS = {
@@ -37,7 +37,7 @@ def marks_path() -> Path:
 
 
 def load_marks() -> dict:
-    return (read_json(marks_path(), {}) or {}).get("criteria") or {}
+    return (read_state(marks_path(), {}) or {}).get("criteria") or {}
 
 
 def set_mark(code: str, status: str, note: str | None = None) -> dict:
@@ -46,7 +46,7 @@ def set_mark(code: str, status: str, note: str | None = None) -> dict:
         raise ValueError(f"{code} проверяется по срезу, отмечать его не нужно. Отмечаются: {', '.join(sorted(OWNER))}")
     if status not in MARK_STATUSES:
         raise ValueError(f"Нет такого статуса: {status}. Есть: {', '.join(MARK_STATUSES)}")
-    data = read_json(marks_path(), {}) or {}
+    data = read_state(marks_path(), {}) or {}
     items = data.setdefault("criteria", {})
     if status == "open":
         items.pop(code, None)

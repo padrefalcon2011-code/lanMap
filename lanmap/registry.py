@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from lanmap.util import data_dir, now_iso, norm_mac, read_json, write_json
+from lanmap.util import data_dir, now_iso, norm_mac, read_json, read_state, write_json
 
 EDITABLE = ("name", "group", "type", "vendor", "model", "place", "owner", "purpose", "trust", "notes")
 TRUST = ("own", "guest", "unknown")
@@ -24,7 +24,7 @@ def registry_path() -> Path:
 
 
 def load() -> dict:
-    data = read_json(registry_path(), None) or {"version": 1, "devices": {}}
+    data = read_state(registry_path(), None) or {"version": 1, "devices": {}}
     data.setdefault("devices", {})
     return data
 

@@ -8,7 +8,7 @@ import webbrowser
 from pathlib import Path
 
 from lanmap import __version__, netinfo, oui, registry
-from lanmap.util import data_dir, norm_mac, read_json
+from lanmap.util import UserError, data_dir, norm_mac, read_json
 
 
 def _utf8_console() -> None:
@@ -477,4 +477,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if os.name != "nt":
         print("Пока поддерживается только Windows.", file=sys.stderr)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except UserError as exc:  # испорченный файл в data/ и т. п.: понятный текст вместо трассировки
+        raise SystemExit(str(exc))

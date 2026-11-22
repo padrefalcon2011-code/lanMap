@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 from lanmap import forwards as fw_mod
-from lanmap.util import data_dir, now_iso, read_json, write_json
+from lanmap.util import data_dir, now_iso, read_state, write_json
 
 PRIORITY_NAMES = {1: "П1 срочно", 2: "П2 важно", 3: "П3 желательно"}
 CONFIDENCE_NAMES = {"confirmed": "подтверждено", "likely": "вероятно", "verify": "требует проверки"}
@@ -605,7 +605,7 @@ def statuses_path() -> Path:
 
 
 def load_statuses() -> dict:
-    data = read_json(statuses_path(), {}) or {}
+    data = read_state(statuses_path(), {}) or {}
     return data.get("findings") or {}
 
 
@@ -616,7 +616,7 @@ def set_status(check_id: str, key: str, status: str, reason: str | None = None, 
         raise ValueError(f"Нет такой проверки: {check_id}. Есть: {', '.join(BY_ID)}")
     if status not in STATUSES:
         raise ValueError(f"Нет такого статуса: {status}. Есть: {', '.join(STATUSES)}")
-    data = read_json(statuses_path(), {}) or {}
+    data = read_state(statuses_path(), {}) or {}
     items = data.setdefault("findings", {})
     u = uid(check_id, key)
     # Отметка могла сработать по адресу или серийнику (каскад): снимаем именно её, иначе она продолжит переноситься
@@ -660,7 +660,7 @@ def record_recheck(check_id: str, key: str, result: str, detail: str, ips: list[
         raise ValueError(f"Нет такой проверки: {check_id}")
     if result not in RECHECK_NAMES:
         raise ValueError(f"Нет такого итога перепроверки: {result}")
-    data = read_json(statuses_path(), {}) or {}
+    data = read_state(statuses_path(), {}) or {}
     items = data.setdefault("findings", {})
     u = uid(check_id, key)
     old = items.pop(replace, None) if replace and replace != u else None

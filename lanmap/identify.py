@@ -5,13 +5,12 @@
 """
 from __future__ import annotations
 
-import json
 import re
 from functools import lru_cache
 from pathlib import Path
 
 from lanmap import oui
-from lanmap.util import PACKAGE_DIR, data_dir
+from lanmap.util import PACKAGE_DIR, data_dir, read_json, read_state
 
 LEVELS = {"exact": 4, "high": 3, "guess": 2, "weak": 1}
 LEVEL_NAMES = {4: "точно", 3: "высокая", 2: "предположение", 1: "слабая догадка", 0: "неизвестно"}
@@ -55,7 +54,8 @@ def rules_files() -> list[Path]:
 def load_rules() -> tuple[dict, ...]:
     rules: list[dict] = []
     for path in rules_files():
-        data = json.loads(path.read_text("utf-8"))
+        # свои правила владельца — состояние: испорченный файл копируется рядом (util.read_state)
+        data = (read_json(path) if path.parent == PACKAGE_DIR / "fingerprints" else read_state(path)) or {}
         for rule in data.get("rules", []):
             rule = dict(rule, _file=path.name)
             rules.append(rule)

@@ -9,11 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from lanmap import netinfo, registry
-from lanmap.util import norm_mac, read_json
+from lanmap.util import UserError, norm_mac, read_json, read_state
 
-
-class OpError(ValueError):
-    """Понятная человеку ошибка действия: командная строка печатает её, сервер отдаёт кодом 400."""
+# Понятная человеку ошибка действия: командная строка печатает её, сервер отдаёт кодом 400.
+# Это util.UserError: под ту же обработку попадает и util.BadJSON (испорченный файл в data/).
+OpError = UserError
 
 
 class NeedLogin(OpError):
@@ -488,7 +488,7 @@ def ai_apply(target: str, answer: str, to_registry: bool = True, save_rule: bool
             done["registry"] = sign(dev["key"], fields)[1]
     if save_rule and out.get("rule"):
         path = data_dir() / "fingerprints" / "ai.json"
-        doc, rid = aiparse.add_rule(read_json(path, {}) or {}, out["rule"])
+        doc, rid = aiparse.add_rule(read_state(path, {}) or {}, out["rule"])
         write_json(path, doc)
         identify.load_rules.cache_clear()  # иначе сервер не увидит нового правила до перезапуска
         done["rule"] = rid
