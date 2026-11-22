@@ -360,6 +360,52 @@ class ChangesTest(unittest.TestCase):
         self.assertIn("Сеть", render(bare))
 
 
+class MapTest(unittest.TestCase):
+    """Карта сети: место устройства по данным роутера, разметка дерева, вид по умолчанию."""
+
+    def dev(self, n, router=None, alive=True, gateway=False):
+        d = mdev(f"00:00:5E:00:53:{n:02X}", [f"192.0.2.{n}"], alive=alive)
+        d["identity"] = {"type": "camera", "type_label": "Камера", "group": "Камеры", "vendor": None, "model": None,
+                         "firmware": None, "os": None, "name": None, "confidence": 3, "chosen": {}, "rules": [],
+                         "conflicts": [], "notes": []}
+        d.update(is_local=False, is_gateway=gateway, duplicate_mac=False, evidence=[], registry=None, router=router,
+                 actions=[], subtitle="")
+        return d
+
+    def test_slot(self):
+        from lanmap.report import map_slot
+        self.assertEqual(map_slot(self.dev(1, gateway=True)), "gw")
+        self.assertEqual(map_slot(self.dev(2, {"segment": "Home", "link": "wired", "port": "6"}, alive=False)), "off")
+        self.assertEqual(map_slot(self.dev(3)), "scan")  # роутер о нём не знает
+        self.assertEqual(map_slot(self.dev(4, {"segment": "Home", "link": "wired", "port": 6})), "seg|Home|wired|6")
+        self.assertEqual(map_slot(self.dev(5, {"segment": "Guest", "link": "wifi", "band": "5 ГГц"})),
+                         "seg|Guest|wifi|5 ГГц")
+        # роутер не отметил связь активной, но знает точку доступа — это Wi-Fi
+        self.assertEqual(map_slot(self.dev(6, {"segment": "Home", "band": "5 ГГц", "ap": "W1/AP0"})),
+                         "seg|Home|wifi|5 ГГц")
+        self.assertEqual(map_slot(self.dev(7, {"segment": "Home"})), "seg|Home|other|")
+        self.assertEqual(map_slot(self.dev(8, {"segment": "A|B", "link": "wired"})), "seg|A/B|wired|?")
+
+    def test_render(self):
+        from lanmap.report import render
+        wired = [self.dev(n, {"segment": "Home", "link": "wired", "port": "6", "active": True}) for n in (10, 11, 12)]
+        guest = self.dev(20, {"segment": "Guest", "link": "wifi", "band": "5 ГГц", "active": True})
+        devs = [self.dev(1, gateway=True), *wired, guest, self.dev(30), self.dev(40, alive=False)]
+        fw = {"kind": "upnp", "protocol": "tcp", "port": 8080, "to_ip": "192.0.2.10", "to_port": 80}
+        page = render(model(devs, router={"forwards": [fw], "clients": []}))
+        self.assertIn('<main data-map="1">', page)
+        self.assertIn('data-view="map"', page)
+        for slot in ("gw", "seg|Home|wired|6", "seg|Guest|wifi|5 ГГц", "scan", "off"):
+            self.assertGreaterEqual(page.count(f'data-slot="{slot}"'), 2, slot)  # место на карте и плитка
+        self.assertIn("коммутатор или ретранслятор", page)  # три устройства за портом 6
+        self.assertIn("Гостевая сеть", page)
+        self.assertIn(f'class="mdoor" data-goto="{wired[0]["key"]}"', page)  # дверь из интернета ведёт к плитке
+        bare = render(model([self.dev(3), self.dev(4)]))  # без роутера карты нет: остаются плитки и список
+        self.assertIn('<main data-map="0">', bare)
+        self.assertNotIn('data-view="map"', bare)
+        self.assertNotIn('id="mapv"', bare)
+
+
 def sdev(key, ip, dev_type, ports=(), alive=True, gateway=False, local=False, facts=None, vendor=None):
     """Устройство модели для проверок безопасности."""
     d = mdev(key, [ip], alive=alive, ports=ports)

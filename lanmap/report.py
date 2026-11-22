@@ -254,7 +254,11 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
         f'<div class="sline"><span class="pc p{f["priority"]}">{icon("shield", "s")}П{f["priority"]}</span>'
         f'<a href="#sec-{e(f["id"])}">{e(sec_mod.BY_ID[f["id"]].title)}</a>{_status_chip(f)}</div>'
         for f in found or [])
-    return (f'<div class="tdetail" hidden><div class="dgrid"><div class="facts">{facts_html}</div>'
+    # шапка боковой панели: на карте подробности открываются сбоку (или снизу), а не внутри плитки
+    head = (f'<div class="dhead"><span class="ticon" {gstyle(ident["group"])}>{icon(type_icon(ident["type"]), "", ident["type_label"])}'
+            f'</span><span class="tmain"><b>{e(dev["title"])}</b><span class="sub">{e(dev.get("subtitle") or ident.get("type_label") or "")}</span></span>'
+            f'<button class="iconbtn dclose" title="Закрыть (Esc)" aria-label="Закрыть">{icon("x", "s")}</button></div>')
+    return (f'<div class="tdetail" hidden>{head}<div class="dgrid"><div class="facts">{facts_html}</div>'
             f'<div class="ports">{ports}</div></div>{slines}<div class="acts">{"".join(acts)}</div>{why}</div>')
 
 
@@ -294,7 +298,7 @@ def _tile(dev: dict, changes: dict | None, found: list[dict] | None = None) -> s
                                "risky" if risky else "") if x)
     ip = ", ".join(dev["ips"]) or (dev["mac"] or "")
     return (f'<article class="{cls}" id="d-{e(dev["key"])}" data-group="{e(ident["group"])}" data-status="{status}" '
-            f'data-conf="{conf}" data-changed="{1 if items else 0}" data-search="{e(search)}">'
+            f'data-conf="{conf}" data-changed="{1 if items else 0}" data-slot="{e(map_slot(dev))}" data-search="{e(search)}">'
             f'<button class="thead" aria-expanded="false">'
             f'<span class="ticon" {gstyle(ident["group"])}>{icon(type_icon(ident["type"]), "", ident["type_label"])}'
             f'<i class="dot {"" if dev["alive"] else "off"}" title="{dot_label}"></i></span>'
@@ -302,8 +306,124 @@ def _tile(dev: dict, changes: dict | None, found: list[dict] | None = None) -> s
             f'{"<span class=sub>" + e(dev["subtitle"]) + "</span>" if dev["subtitle"] else ""}'
             f'<span class="ip mono">{e(ip)}</span></span>'
             f'<span class="tside">{_meter(conf)}{_connection(dev.get("router") or {})}</span>'
-            f'<span class="tmarks">{marks}</span></button>'
+            f'<span class="tmarks">{marks}</span><span class="tone">{_one_mark(dev, items, found)}</span></button>'
             f'{_detail(dev, found)}</article>')
+
+
+def _one_mark(dev: dict, items: list[dict], found: list[dict]) -> str:
+    """Один главный признак для компактной плитки на карте: находка → новое → опасный порт → изменение → подпись."""
+    sec = _sec_chip(found)
+    if sec:
+        return sec
+    new = next((x for x in items if x["what"] == "new"), None)
+    if new:
+        return change_chip(new)
+    risky = next((s for s in dev["services"] if s["port"] in RISKY_PORTS), None)
+    if risky:
+        return _port_chip(risky)
+    if items:
+        return change_chip(items[0]) + (f'<span class="pc">+{len(items) - 1}</span>' if len(items) > 1 else "")
+    if (dev.get("registry") or {}).get("confirmed"):
+        return f'<span class="flag acc">{icon("check", "s", "Подписано владельцем")}</span>'
+    return ""
+
+
+# --- карта сети ------------------------------------------------------------------------------
+# Дерево строится по данным роутера: сегмент (домашняя / гостевая сеть) → кабель с портом / Wi-Fi с диапазоном.
+# Без модуля роутера карты нет — остаются плитки и список.
+
+SEGMENT_NAMES = {"home": "Домашняя сеть", "guest": "Гостевая сеть"}
+HUB_HINT = 3  # столько устройств за одним портом роутера — там, скорее всего, коммутатор или ретранслятор
+
+
+def map_slot(dev: dict) -> str:
+    """Место устройства на карте: gw, off (не в сети), scan (роутер о нём не знает) или seg|<сегмент>|<вид>|<порт или диапазон>."""
+    if dev.get("is_gateway"):
+        return "gw"
+    if not dev.get("alive"):
+        return "off"
+    r = dev.get("router") or {}
+    seg = str(r.get("segment") or "").replace("|", "/")
+    if not seg:
+        return "scan"
+    port = "" if r.get("port") in (None, "") else str(r["port"])
+    if r.get("link") == "wired" or (r.get("link") is None and port and not (r.get("band") or r.get("ap"))):
+        return f"seg|{seg}|wired|{port or '?'}"
+    if r.get("link") == "wifi" or r.get("band") or r.get("ap"):
+        return f"seg|{seg}|wifi|{r.get('band') or ''}"
+    return f"seg|{seg}|other|"
+
+
+def has_map(model: dict) -> bool:
+    return any(map_slot(d).startswith("seg|") for d in model["devices"])
+
+
+def _port_order(p: str):
+    return (0, int(p), "") if p.isdigit() else (1, 0, p)
+
+
+def _branch(title: str, ico: str, slot: str, n: int, hint: str = "") -> str:
+    return (f'<details class="branch" open><summary>{icon("chevron", "s chev")}{icon(ico, "s")}{e(title)}'
+            f' <span class="n">{n}</span>{"<span class=bhint>" + e(hint) + "</span>" if hint else ""}</summary>'
+            f'<div class="nodes" data-slot="{e(slot)}"></div></details>')
+
+
+def _segment(name: str, slots: Counter) -> str:
+    mine = {s: n for s, n in slots.items() if s.startswith(f"seg|{name}|")}
+    total = sum(mine.values())
+    kinds = {}
+    for s in mine:
+        _, kind, val = s.rsplit("|", 2)
+        kinds.setdefault(kind, []).append(val)
+    left = right = ""
+    if "wired" in kinds:
+        ports = sorted(kinds["wired"], key=_port_order)
+        subs = "".join(_branch(f"Порт {p}" if p != "?" else "Порт не известен", "link", f"seg|{name}|wired|{p}",
+                               mine[f"seg|{name}|wired|{p}"],
+                               "коммутатор или ретранслятор?" if mine[f"seg|{name}|wired|{p}"] >= HUB_HINT else "")
+                       for p in ports)
+        n = sum(mine[f"seg|{name}|wired|{p}"] for p in ports)
+        left = (f'<details class="branch" open><summary>{icon("chevron", "s chev")}{icon("cable", "s")}Кабель'
+                f' <span class="n">{n}</span></summary>{subs}</details>')
+    for band in sorted(kinds.get("wifi", []), key=lambda b: (not b, b)):
+        right += _branch(f"Wi-Fi {band}".strip(), "wifi3", f"seg|{name}|wifi|{band}", mine[f"seg|{name}|wifi|{band}"])
+    if "other" in kinds:
+        right += _branch("Подключение не известно", "question", f"seg|{name}|other|", mine[f"seg|{name}|other|"])
+    low = name.lower()
+    title = SEGMENT_NAMES.get(low, name)
+    hint = "" if low == "home" else '<span class="hint">отдельный сегмент роутера</span>'
+    return (f'<section class="segcol{" guest" if low != "home" else ""}"><div class="seghead">'
+            f'{icon("home" if low == "home" else "lock", "s")}{e(title)} <span class="n">{total}</span>{hint}</div>'
+            f'<div class="seginner">{"<div>" + left + "</div>" if left else ""}{"<div>" + right + "</div>" if right else ""}</div></section>')
+
+
+def _map(model: dict) -> str:
+    devs = model["devices"]
+    slots = Counter(map_slot(d) for d in devs)
+    segs = sorted({s.rsplit("|", 2)[0].removeprefix("seg|") for s in slots if s.startswith("seg|")},
+                  key=lambda n: (n.lower() != "home", -sum(c for s, c in slots.items() if s.startswith(f"seg|{n}|")), n))
+    by_ip = {ip: d for d in devs for ip in d["ips"]}
+    doors = []
+    for f in fw_mod.merged(model):
+        dev = by_ip.get(f.get("to_ip"))
+        name = dev["title"] if dev else (f.get("to_ip") or "?")
+        goto = f' data-goto="{e(dev["key"])}"' if dev else ""
+        doors.append(f'<button class="mdoor"{goto} title="Проброс из интернета: {e((f.get("kind") or "").upper())} '
+                     f'{e((f.get("protocol") or "").upper())} {e(f.get("port") or "")}">{icon("arrow", "s")}'
+                     f':{e(f.get("port") or "?")} → {e(name)}</button>')
+    main_seg = _segment(segs[0], slots) if segs else ""
+    side = "".join(_segment(n, slots) for n in segs[1:])
+    if slots.get("scan"):
+        side += (f'<section class="segcol scan"><div class="seghead">{icon("search", "s")}Без данных роутера '
+                 f'<span class="n">{slots["scan"]}</span><span class="hint">видно только сканированием: за мостом '
+                 f'или роутер о нём не знает</span></div><div class="nodes" data-slot="scan"></div></section>')
+    off = (f'<details class="offline"><summary>{icon("offline", "s")}Не в сети <span class="n">{slots["off"]}</span>'
+           f'<span class="muted">— известны по прошлым срезам и роутеру</span></summary>'
+           f'<div class="nodes" data-slot="off"></div></details>' if slots.get("off") else "")
+    return (f'<div id="mapv" class="mapbox"><div class="trunk"><div class="inet"><span class="cloud">{icon("globe", "s")}Интернет</span>'
+            f'{"".join(doors)}</div><div class="wire{" hot" if doors else ""}"></div><div class="nodes gw" data-slot="gw"></div>'
+            f'<div class="wire"></div></div><div class="segs{"" if side else " one"}">{main_seg}'
+            f'{"<div class=side>" + side + "</div>" if side else ""}</div>{off}</div>')
 
 
 # --- панели ----------------------------------------------------------------------------------
@@ -826,7 +946,7 @@ def render(model: dict) -> str:
     for g in groups:
         tiles = "".join(_tile(d, changes, found_by_key.get(d["key"])) for d in devs if d["identity"]["group"] == g)
         is_open = "" if g == OFFLINE_GROUP else " open"
-        sections.append(f'<details class="group" {gstyle(g)}{is_open}><summary>{icon("chevron", "s chev")}'
+        sections.append(f'<details class="group" data-g="{e(g)}" {gstyle(g)}{is_open}><summary>{icon("chevron", "s chev")}'
                         f'<span class="gico">{icon(GROUP_ICONS.get(g, "unknown"))}</span>{e(g)} '
                         f'<span class="n">{count[g]}</span></summary>'
                         f'<div class="grid">{tiles}</div></details>')
@@ -834,6 +954,9 @@ def render(model: dict) -> str:
     changed_btn = (f'<button class="iconbtn" id="f-changed" {tip("Только изменившиеся")}>{icon("delta", "s")}</button>'
                    if has_changes else "")
     started = meta.get("started", "")[:16].replace("T", " ")
+    mapped = has_map(model)
+    map_btn = (f'<button class="tip-l" data-view="map" {tip("Карта: кто куда подключён")}>{icon("devices", "s")}</button>'
+               if mapped else "")
 
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -872,12 +995,12 @@ def render(model: dict) -> str:
   {changed_btn}
   <button class="iconbtn" id="f-low" {tip("Только неуверенно опознанные")}>{icon("question", "s")}</button>
   <span class="seg" role="group" aria-label="Вид">
-    <button data-view="tiles" {tip("Плитки")}>{icon("grid", "s")}</button>
-    <button data-view="list" {tip("Список")}>{icon("list", "s")}</button>
+    {map_btn}<button class="tip-l" data-view="tiles" {tip("Плитки")}>{icon("grid", "s")}</button>
+    <button class="tip-l" data-view="list" {tip("Список")}>{icon("list", "s")}</button>
   </span>
   <button class="iconbtn tip-l" id="expand" {tip("Развернуть / свернуть все")}>{icon("expand", "s")}</button>
 </div>
-<main>{''.join(sections)}<p id="empty" class="note hidden">{icon("search", "s")}Ничего не найдено.</p></main>
+<main data-map="{1 if mapped else 0}">{_map(model) if mapped else ""}{''.join(sections)}<p id="empty" class="note hidden">{icon("search", "s")}Ничего не найдено.</p></main>
 {_legend()}
 <footer>LanMap {e(meta.get('lanmap_version', ''))} · только чтение сети · отчёт содержит личные данные, не публикуй его</footer>
 </div>

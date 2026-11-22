@@ -70,7 +70,7 @@ CSS = r"""
 --line:#2d3239;--chip:#262a31;--accent:#3987e5;--accent-soft:#1d2b3d;--good:#2fbf2f;--warn:#fab219;--warn-soft:#33290f;
 --crit:#e66767;--crit-soft:#3a1f1f;--add:#6da7ec;--add-soft:#1d2b3d;--shadow:none;--serious:#f0956c;--warn-text:#fab219}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,"Segoe UI",sans-serif}
+body{margin:0;overflow-x:clip;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,"Segoe UI",sans-serif}
 svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
 svg.i.s{width:18px;height:18px}svg.i.l{width:30px;height:30px}
 svg.i .d{fill:currentColor;opacity:.2;stroke:none}
@@ -440,6 +440,56 @@ a.sbtn{text-decoration:none}
 .ft.back .fbadge,.ft.new .fbadge{background:var(--chip);color:var(--good)}
 .ft .act{flex:none}
 .ft.fixed{opacity:.6}
+/* карта сети: вид по умолчанию, когда есть данные роутера */
+#mapv,.dhead,.tone{display:none}
+body.v-map #mapv{display:block}
+body.v-map main details.group,body.v-map #expand{display:none}
+.mapbox{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:6px;
+background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:18px 18px}
+.trunk{display:flex;flex-direction:column;align-items:center}
+.inet{display:flex;flex-direction:column;align-items:center;gap:6px}
+.cloud{display:inline-flex;align-items:center;gap:8px;padding:5px 14px;border-radius:99px;background:var(--chip);border:1px solid var(--line);font-weight:600}
+.mdoor{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--crit);background:var(--crit-soft);color:var(--crit);
+border-radius:99px;padding:2px 10px;font-size:12.5px;font-weight:600;cursor:pointer}
+.wire{width:2px;height:20px;background:var(--line)}
+.wire.hot{background:repeating-linear-gradient(var(--crit) 0 5px,transparent 5px 9px)}
+.nodes{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px;align-items:start;padding:4px 0 2px}
+.nodes.gw{display:flex;justify-content:center;padding:0}.nodes.gw .tile{width:min(100%,300px)}
+.segs{display:grid;grid-template-columns:minmax(0,2.4fr) minmax(240px,1fr);gap:14px;align-items:start;padding-top:18px;border-top:2px solid var(--line)}
+.segs.one{grid-template-columns:1fr}
+.side{display:grid;gap:14px;min-width:0}
+.segcol{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;min-width:0}
+.segcol.guest{border-style:dashed}.segcol.scan{border-style:dotted}
+.seghead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:600;margin:0 2px 6px}
+.seghead .n,.branch .n,.offline .n{color:var(--muted);font-weight:500;font-size:12.5px}
+.seghead .hint{flex-basis:100%;font-weight:400;font-size:12px;color:var(--muted);margin-top:-4px}
+.seginner{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:4px 12px;align-items:start}
+.branch{margin:0 0 6px 6px;padding-left:10px;border-left:2px solid var(--line)}
+.branch>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 0;font-weight:600;font-size:13px}
+.branch>summary::-webkit-details-marker,.offline>summary::-webkit-details-marker{display:none}
+.branch>summary .chev{color:var(--muted);transition:transform .15s}
+.branch:not([open])>summary .chev{transform:rotate(-90deg)}
+.bhint{flex-basis:100%;padding-left:42px;margin-top:-3px;font-size:12px;font-weight:500;color:var(--warn-text)}
+.offline{margin-top:12px}
+.offline>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;font-weight:600;padding:8px 10px;border-radius:10px;background:var(--chip)}
+.offline>summary .muted{font-weight:400;font-size:12.5px}
+/* компактная плитка на карте: значок, имя, адрес и один признак; подробности — в боковой панели */
+body.v-map #mapv .thead{grid-template-areas:"icon main one";gap:4px 9px;padding:6px 8px}
+body.v-map #mapv .tside,body.v-map #mapv .tmarks,body.v-map #mapv .thead .sub{display:none}
+body.v-map #mapv .tone{display:flex;grid-area:one;gap:3px;align-items:center}
+body.v-map #mapv .ticon{width:38px;height:38px;border-radius:10px}
+body.v-map #mapv .ticon svg.i{width:24px;height:24px}
+body.v-map #mapv .tmain b{font-size:13.5px}
+body.v-map .tile.open{grid-column:auto;outline:3px solid var(--accent);outline-offset:1px}
+body.v-map .tile.open .tdetail{position:fixed;z-index:30;top:10px;right:10px;bottom:10px;width:min(460px,calc(100vw - 20px));overflow:auto;
+background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.28);padding:0 14px 14px}
+body.v-map .tdetail .dhead{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:1;background:var(--card);
+margin:0 -14px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.dhead .ticon{width:46px;height:46px;flex:none}.dhead .ticon svg.i{width:28px;height:28px}
+.dhead .tmain{flex:1}.dhead .tmain b{font-size:16px}
+@media (min-width:1100px){body.v-map.drawer .wrap{padding-right:490px}}
+@media (max-width:1099px){body.v-map .tile.open .tdetail{top:auto;left:0;right:0;bottom:0;width:auto;max-height:75vh;border-radius:16px 16px 0 0}}
+@media (max-width:700px){.segs{grid-template-columns:1fr;border-top:0;padding-top:6px}.nodes{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
 
@@ -457,16 +507,31 @@ $('#theme').addEventListener('click',()=>{const dark=matchMedia('(prefers-color-
  const cur=document.documentElement.dataset.theme||(dark?'dark':'light');const next=cur==='dark'?'light':'dark';
  document.documentElement.dataset.theme=next;store.set('theme',next);});
 
-// вид плитки / список
-function setView(v){main.classList.toggle('list',v==='list');
- $$('[data-view]').forEach(b=>b.classList.toggle('on',b.dataset.view===v));store.set('view',v);}
+// вид: карта / плитки / список. Плитка в отчёте одна: при смене вида она переезжает между картой и группами,
+// поэтому обработчики кнопок и поиск плитки по id работают в любом виде
+const tiles=$$('.tile'),hasMap=main.dataset.map==='1';let viewNow='';
+function place(v){if(v==='map'){const ss=$$('.nodes[data-slot]',main);tiles.forEach(t=>{const s=ss.find(x=>x.dataset.slot===t.dataset.slot);if(s)s.appendChild(t);});}
+ else{const gs=$$('details.group',main);tiles.forEach(t=>{const g=gs.find(x=>x.dataset.g===t.dataset.group);if(g)$('.grid',g).appendChild(t);});}}
+function setView(v){if(v==='map'&&!hasMap)v='tiles';
+ if(!viewNow||(viewNow==='map')!==(v==='map')){$$('.tile.open').forEach(t=>openTile(t,false));place(v);}
+ document.body.classList.toggle('v-map',v==='map');main.classList.toggle('list',v==='list');
+ $$('[data-view]').forEach(b=>b.classList.toggle('on',b.dataset.view===v));
+ // новый ключ: у прежних отчётов сохранено «плитки», а карта теперь — вид по умолчанию
+ const first=!viewNow;viewNow=v;if(!first){store.set('view2',v);apply();}}
 $$('[data-view]').forEach(b=>b.addEventListener('click',()=>setView(b.dataset.view)));
-setView(store.get('view')||'tiles');
+setView(store.get('view2')||(hasMap?'map':'tiles'));
 
-// разворот плитки
+// разворот плитки; на карте подробности — боковая панель (на узком экране — снизу), открыта одна
 function openTile(t,open){const d=$('.tdetail',t),h=$('.thead',t);
- open=open===undefined?d.hidden:open;d.hidden=!open;t.classList.toggle('open',open);h.setAttribute('aria-expanded',open);}
+ open=open===undefined?d.hidden:open;
+ if(open&&viewNow==='map')$$('.tile.open').forEach(x=>{if(x!==t)openTile(x,false);});
+ d.hidden=!open;t.classList.toggle('open',open);h.setAttribute('aria-expanded',open);
+ document.body.classList.toggle('drawer',!!$('.tile.open'));}
 $$('.tile').forEach(t=>$('.thead',t).addEventListener('click',()=>openTile(t)));
+$$('.dclose').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();const t=b.closest('.tile');openTile(t,false);$('.thead',t).focus();}));
+document.addEventListener('keydown',e=>{if(e.key!=='Escape'||viewNow!=='map'||document.querySelector('dialog[open]'))return;
+ const f=$('#finder');if(f&&!f.hidden)return;if(e.target.closest&&e.target.closest('.signf,.snapf'))return;
+ const t=$('.tile.open');if(t){openTile(t,false);$('.thead',t).focus();}});
 $('#expand').addEventListener('click',()=>{const vis=$$('.tile:not(.hidden)');const anyClosed=vis.some(t=>$('.tdetail',t).hidden);
  vis.forEach(t=>openTile(t,anyClosed));$$('details.group').forEach(g=>{if(anyClosed&&g.querySelector('.tile:not(.hidden)'))g.open=true});});
 
@@ -474,7 +539,7 @@ $('#expand').addEventListener('click',()=>{const vis=$$('.tile:not(.hidden)');co
 $$('[data-goto]').forEach(b=>b.addEventListener('click',e=>{e.preventDefault();
  const t=document.getElementById('d-'+b.dataset.goto);if(!t)return;
  st.group='';st.status='';st.changed=false;st.low=false;st.q='';$('#q').value='';sync();
- const g=t.closest('details.group');if(g)g.open=true;openTile(t,true);
+ for(let p=t.parentElement;p;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true;openTile(t,true);
  t.scrollIntoView({behavior:'smooth',block:'center'});t.classList.remove('flash');void t.offsetWidth;t.classList.add('flash');}));
 
 // фильтры
@@ -484,13 +549,17 @@ function apply(){const q=st.q.trim().toLowerCase();
    &&(!st.low||+d.conf<3)&&(!q||d.search.includes(q));t.classList.toggle('hidden',!ok);});
  $$('details.group').forEach(g=>{const n=$$('.tile:not(.hidden)',g).length;g.classList.toggle('hidden',!n);
   $('.n',g).textContent=n;if(q&&n)g.open=true;});
+ // карта: пустые ветки и сегменты прячутся, счётчики — по видимым
+ $$('#mapv .branch,#mapv .segcol,#mapv .offline').forEach(c=>{const n=$$('.tile:not(.hidden)',c).length;c.classList.toggle('hidden',!n);
+  const s=$(':scope>summary>.n,:scope>.seghead>.n',c);if(s)s.textContent=n;if((q||st.status==='off')&&n&&c.tagName==='DETAILS')c.open=true;});
+ $$('.tile.open.hidden').forEach(t=>openTile(t,false));
  $('#empty').classList.toggle('hidden',!!$('.tile:not(.hidden)'));}
 function sync(){$$('.gf').forEach(b=>b.classList.toggle('on',b.dataset.group===st.group));
  $('.gfilters').classList.toggle('picked',!!st.group);
- $$('[data-status]').forEach(b=>b.classList.toggle('on',b.dataset.status===st.status));
+ $$('button[data-status]').forEach(b=>b.classList.toggle('on',b.dataset.status===st.status));
  const c=$('#f-changed');if(c)c.classList.toggle('on',st.changed);$('#f-low').classList.toggle('on',st.low);apply();}
 $$('.gf').forEach(b=>b.addEventListener('click',()=>{st.group=st.group===b.dataset.group?'':b.dataset.group;sync();}));
-$$('[data-status]').forEach(b=>b.addEventListener('click',()=>{st.status=b.dataset.status;sync();}));
+$$('button[data-status]').forEach(b=>b.addEventListener('click',()=>{st.status=b.dataset.status;sync();}));
 const fc=$('#f-changed');if(fc)fc.addEventListener('click',()=>{st.changed=!st.changed;sync();});
 $('#f-low').addEventListener('click',()=>{st.low=!st.low;sync();});
 $('#q').addEventListener('input',e=>{st.q=e.target.value;apply();});
