@@ -104,6 +104,32 @@ class ExternalBuildTest(unittest.TestCase):
         self.assertEqual(output_dir(inside), inside.resolve())
 
 
+class SnapshotCheckTest(unittest.TestCase):
+    def test_report_says_interrupted_or_changed(self):
+        """build по прерванному или изменённому срезу собирается, но «О срезе» говорит об этом."""
+        from lanmap import snapshot
+        from lanmap.build import build
+        from lanmap.report import _about
+        snap = Path(tempfile.mkdtemp(dir=TMP.name)) / "2026-01-04_000000"
+        write_json(snap / "meta.json", {"interface": {"local_ip": "192.0.2.5", "network": "192.0.2.0/24"}, "admin": True})
+        write_json(snap / "raw" / "ping.json", {"192.0.2.10": {"alive": True}})
+        model = build(snap)
+        self.assertIn("Срез прерван", _about(model))
+        finish_snapshot(snap)
+        m = read_json(snap / "meta.json")
+        write_json(snap / "meta.json", {**m, "manifest": snapshot.manifest(snap),
+                                        "warnings": ["не удалось удалить временные файлы сертификатов в data/tmp-cert: 1"]})
+        model = build(snap)
+        self.assertTrue(model["snapshot_check"]["ok"])
+        self.assertNotIn("manifest", model["meta"])
+        self.assertNotIn("Срез прерван", _about(model))
+        self.assertIn("временные файлы сертификатов", _about(model))
+        write_json(snap / "raw" / "ping.json", {})
+        about = _about(build(snap))
+        self.assertIn("изменены после съёмки: ping.json", about)
+        self.assertIn("проверка неполная", about)
+
+
 class DnsTest(unittest.TestCase):
     def test_roundtrip(self):
         name = dnswire.encode_name("cam._http._tcp.local")

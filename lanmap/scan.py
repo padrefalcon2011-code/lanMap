@@ -174,6 +174,8 @@ def run_scan(net: netinfo.LocalNet, ports: list[int] | None = None, quiet: bool 
     meta["finished"] = now_iso()
     meta["stages"] = progress.stages
     meta["candidates"] = len(candidates)
+    # Манифест сырых файлов — той же записью, что и finished: завершённый срез без манифеста бывает только старый
+    meta["manifest"] = snapshot.manifest(snap)
     write_json(snap / "meta.json", meta)
     progress.step(f"Сырые улики сохранены: {snap}")
     return snap

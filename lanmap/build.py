@@ -5,6 +5,7 @@ import ipaddress
 from pathlib import Path
 
 from lanmap import actions, changes, checklist, devices, identify, oui, registry, routers, security
+from lanmap import snapshot as snapshot_mod
 from lanmap.collectors import igd
 from lanmap.report import render
 from lanmap.util import data_dir, now_iso, read_json, write_json
@@ -40,7 +41,7 @@ def display(dev: dict) -> tuple[str, str]:
 def make_model(snapshot: Path, reg: dict | None = None) -> dict:
     """Модель среза по текущим правилам и реестру. Ничего не записывает."""
     snapshot = Path(snapshot)
-    meta = read_json(snapshot / "meta.json", {})
+    meta = {k: v for k, v in (read_json(snapshot / "meta.json", {}) or {}).items() if k != "manifest"}
     reg = reg if reg is not None else registry.load()
     devs = devices.build(snapshot, registry.aliases(reg))
     keys = {d["key"] for d in devs}
@@ -97,6 +98,8 @@ def build(snapshot: Path, baseline: Path | None = None) -> dict:
     snapshot = Path(snapshot)
     reg = registry.load()
     model = make_model(snapshot, reg)
+    # Прерванный или испорченный срез собрать можно (build <путь>), но отчёт должен об этом сказать
+    model["snapshot_check"] = snapshot_mod.verify(snapshot)
     baseline = Path(baseline) if baseline else changes.previous_snapshot(snapshot)
     model["changes"] = None
     if baseline and baseline.resolve() != snapshot.resolve():

@@ -16,6 +16,7 @@ from lanmap import askai as askai_mod
 from lanmap import forwards as fw_mod
 from lanmap import security as sec_mod
 from lanmap import share as share_mod
+from lanmap import snapshot as snapshot_mod
 from lanmap.recheck import SUPPORTED as RECHECKABLE
 from lanmap.devices import connection_text
 from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
@@ -851,6 +852,10 @@ def _about(model: dict) -> str:
     meta, router = model["meta"], model.get("router")
     iface = meta.get("interface") or {}
     warns = []  # (текст, нужна ли кнопка «Настроить» — в веб-интерфейсе открывает окно настройки)
+    for text in snapshot_mod.problems(model.get("snapshot_check") or {"finished": True}):
+        warns.append((text[0].upper() + text[1:] + ".", False))
+    for text in meta.get("warnings") or []:
+        warns.append((text[0].upper() + text[1:] + ".", False))
     if not router and model.get("router_skipped"):
         warns.append((f'Данные роутера недоступны: {model["router_skipped"]}. Без них нет карты подключений и пробросов.', True))
     if not meta.get("admin"):
