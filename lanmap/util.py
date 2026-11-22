@@ -98,19 +98,20 @@ def read_json(path: Path, default: Any = None) -> Any:
 
 
 def _backup(path: Path) -> Path:
-    """Копия испорченного файла рядом: <имя>.broken-<время><расширение>. Такая же копия уже есть — её и вернуть."""
+    """Копия испорченного файла рядом: <имя.json>.broken-<время>. Такая же копия уже есть — её и вернуть.
+    Расширение у копии не .json: иначе data/fingerprints/*.json взял бы её за файл правил."""
     body = path.read_bytes()
-    for old in sorted(path.parent.glob(f"{path.stem}.broken-*{path.suffix}")):
+    for old in sorted(path.parent.glob(f"{path.name}.broken-*")):
         try:
             if old.read_bytes() == body:
                 return old
         except OSError:
             continue
     stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = path.with_name(f"{path.stem}.broken-{stamp}{path.suffix}")
+    out = path.with_name(f"{path.name}.broken-{stamp}")
     n = 2
     while out.exists():
-        out = path.with_name(f"{path.stem}.broken-{stamp}-{n}{path.suffix}")
+        out = path.with_name(f"{path.name}.broken-{stamp}-{n}")
         n += 1
     out.write_bytes(body)
     return out

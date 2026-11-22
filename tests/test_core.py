@@ -421,7 +421,7 @@ class BrokenStateTest(unittest.TestCase):
         self.addCleanup(self._clean)
 
     def _clean(self):
-        for f in self.path.parent.glob("findings*.json"):
+        for f in self.path.parent.glob("findings.json*"):
             f.unlink()
 
     def test_backup_and_no_overwrite(self):
@@ -441,7 +441,26 @@ class BrokenStateTest(unittest.TestCase):
         with self.assertRaises(BadJSON) as again:
             security.load_statuses()
         self.assertEqual(again.exception.backup, backup)
-        self.assertEqual(len(list(self.path.parent.glob("findings.broken-*.json"))), 1)
+        self.assertEqual(len(list(self.path.parent.glob("findings.json.broken-*"))), 1)
+
+    def test_broken_own_rules_recover(self):
+        """Испорченный data/fingerprints/x.json: сборка правил падает понятно, копия — не файл правил,
+        и после исправления правила снова читаются."""
+        from lanmap.util import BadJSON, data_dir
+        rules = data_dir() / "fingerprints" / "x.json"
+        rules.parent.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: [f.unlink() for f in rules.parent.glob("x.json*")])
+        self.addCleanup(identify.load_rules.cache_clear)
+        rules.write_text('{"rules": [', "utf-8")
+        for _ in range(2):
+            identify.load_rules.cache_clear()
+            with self.assertRaises(BadJSON):
+                identify.load_rules()
+        self.assertEqual(len(list(rules.parent.glob("x.json.broken-*"))), 1)
+        self.assertNotIn("x.json.broken", " ".join(p.name for p in identify.rules_files()))
+        rules.write_text('{"rules": []}', "utf-8")
+        identify.load_rules.cache_clear()
+        self.assertTrue(identify.load_rules())
 
     def test_raw_file_names_path(self):
         from lanmap.util import BadJSON
