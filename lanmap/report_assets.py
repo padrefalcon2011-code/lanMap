@@ -253,6 +253,9 @@ background:color-mix(in srgb,var(--g) 16%,var(--card))}
 .tmarks{grid-area:marks;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
 .flag{display:inline-flex;align-items:center;color:var(--muted)}
 .flag.warn{color:var(--warn)}.flag.acc{color:var(--accent)}.flag.crit{color:var(--crit)}
+.hist{flex-wrap:wrap}.hist .dots{display:inline-flex;gap:2px;margin-left:4px}
+.hist .dots i{width:7px;height:7px;border-radius:50%;border:1px solid var(--faint)}
+.hist .dots i.h1{background:var(--good);border-color:var(--good)}.hist .dots i.h0{background:var(--faint)}
 .linkres{margin-top:8px;padding:8px 10px;border-radius:9px;background:var(--chip);font-size:13px;display:grid;gap:3px}
 .linkres[hidden]{display:none}.linkres .lv1{font-weight:600;display:flex;align-items:center;gap:6px}
 .linkres.good .lv1{color:var(--good)}.linkres.warn{background:var(--warn-soft)}.linkres.warn .lv1{color:var(--warn-text)}

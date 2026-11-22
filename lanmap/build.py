@@ -5,6 +5,7 @@ import ipaddress
 from pathlib import Path
 
 from lanmap import actions, changes, checklist, devices, identify, oui, registry, routers, security
+from lanmap import history
 from lanmap import snapshot as snapshot_mod
 from lanmap.collectors import igd
 from lanmap.report import render
@@ -100,6 +101,11 @@ def build(snapshot: Path, baseline: Path | None = None) -> dict:
     model = make_model(snapshot, reg)
     # Прерванный или испорченный срез собрать можно (build <путь>), но отчёт должен об этом сказать
     model["snapshot_check"] = snapshot_mod.verify(snapshot)
+    # Календарь наблюдений: в каких из последних срезов той же сети было каждое устройство
+    hist = history.observe(snapshot, model["devices"])
+    model["history_snapshots"] = hist["snapshots"]
+    for dev in model["devices"]:
+        dev["history"] = hist["by_key"].get(dev["key"])
     baseline = Path(baseline) if baseline else changes.previous_snapshot(snapshot)
     model["changes"] = None
     if baseline and baseline.resolve() != snapshot.resolve():

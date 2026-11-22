@@ -537,6 +537,37 @@ class LinkTestTest(unittest.TestCase):
                 ops.link_test("192.0.2.10", seconds=1)
 
 
+class HistoryTest(unittest.TestCase):
+    def test_marks_across_snapshots(self):
+        """Календарь: по срезу — в сети / известно / не было; чужая сеть, прерванный и несобранный не в счёт."""
+        from lanmap import history
+        from lanmap.report import _history
+        base = Path(tempfile.mkdtemp(dir=TMP.name))
+        net = {"interface": {"network": "192.0.2.0/24"}}
+
+        def snap(name, devs, **meta):
+            p = finish_snapshot(base / name, started=f"{name[:10]}T10:00", **{**net, **meta})
+            write_json(p / "devices.json", {"devices": devs})
+            return p
+        snap("2026-01-01_100000", [mdev(MAC_B, ["192.0.2.10"])])
+        snap("2026-01-02_100000", [mdev(MAC_B, ["192.0.2.10"], alive=False), mdev(MAC_C, ["192.0.2.11"])])
+        snap("2026-01-03_100000", [mdev(MAC_C, ["192.0.2.11"])], interface={"network": "198.51.100.0/24"})
+        write_json(base / "2026-01-04_100000" / "meta.json", net)        # прерванный
+        now = finish_snapshot(base / "2026-01-05_100000", started="2026-01-05T10:00", **net)
+        cur = [mdev(MAC_B, ["192.0.2.10"]), mdev(MAC_C, ["192.0.2.11"], alive=False), mdev(MAC_A, ["192.0.2.12"])]
+        h = history.observe(now, cur)
+        self.assertEqual(len(h["snapshots"]), 3)
+        self.assertEqual(h["by_key"][MAC_B], {"marks": "101", "seen": 3, "first": "2026-01-01T10:00",
+                                              "last_alive": "2026-01-05T10:00"})
+        self.assertEqual(h["by_key"][MAC_C]["marks"], "·10")
+        self.assertEqual(h["by_key"][MAC_A]["marks"], "··1")
+        row = _history({"history": h["by_key"][MAC_C]})
+        self.assertIn("<b>2</b> из 3 срезов · впервые 02.01 · в сети 02.01", row)
+        self.assertEqual(row.count("<i "), 3)
+        self.assertEqual(_history({"history": {"marks": "1"}}), "")      # один срез — истории нет
+        self.assertEqual(len(history.observe(now, cur, limit=2)["snapshots"]), 2)
+
+
 class RouterCompletenessTest(unittest.TestCase):
     """Модуль роутера сам объявляет, какие пробросы читает: молчание не значит «пробросов нет»."""
 

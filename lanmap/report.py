@@ -299,6 +299,7 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
         f'</span><button class="sbtn live-only" data-ipcheck="{e(c["ip"])}" title="Спросить адрес по ARP пять раз: '
         f'ответят ли разные устройства">{icon("refresh", "s")}перепроверить</button></div>'
         for c in dev.get("contested") or [])
+    slines += _history(dev)
     # шапка боковой панели: на карте подробности открываются сбоку (или снизу), а не внутри плитки
     head = (f'<div class="dhead"><span class="ticon" {gstyle(ident["group"])}>{icon(type_icon(ident["type"]), "", ident["type_label"])}'
             f'</span><span class="tmain"><b>{e(dev["title"])}</b><span class="sub">{e(dev.get("subtitle") or ident.get("type_label") or "")}</span></span>'
@@ -306,6 +307,28 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
     return (f'<div class="tdetail" hidden>{head}<div class="dgrid"><div class="facts">{facts_html}</div>'
             f'<div class="ports">{ports}</div></div>{slines}<div class="acts">{"".join(acts)}</div>'
             f'<div class="linkres" hidden></div>{why}</div>')
+
+
+def _day(stamp: str | None) -> str:
+    """«2026-11-18T08:16» → «18.11»."""
+    return f"{stamp[8:10]}.{stamp[5:7]}" if stamp and len(stamp) >= 10 else "?"
+
+
+HIST_DOT = {"1": ("h1", "в сети"), "0": ("h0", "известно, но не в сети"), "·": ("hx", "не было")}
+
+
+def _history(dev: dict) -> str:
+    """История наблюдений: точка на каждый из последних срезов той же сети (старые слева)."""
+    h = dev.get("history") or {}
+    marks = h.get("marks") or ""
+    if len(marks) < 2:
+        return ""
+    dots = "".join(f'<i class="{HIST_DOT.get(m, HIST_DOT["·"])[0]}"></i>' for m in marks)
+    last = f' · в сети {_day(h["last_alive"])}' if h.get("last_alive") else " · в сети не было"
+    tip = ("Последние срезы той же сети, старые слева: зелёная — в сети, серая — известно, но не в сети, "
+           "пустая — не было. Срезы нерегулярные: пропуск — это и «не было замера»")
+    return (f'<div class="sline hist" title="{e(tip)}">{icon("grid", "s")}<span>История: <b>{h.get("seen", 0)}</b> '
+            f'из {len(marks)} срезов · впервые {_day(h.get("first"))}{last}</span><span class="dots">{dots}</span></div>')
 
 
 def _sec_chip(found: list[dict]) -> str:
