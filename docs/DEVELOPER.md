@@ -20,6 +20,8 @@ build.build   ─► devices.make_model ─► identify.resolve ─► security 
 |---|---|---|
 | Вход | `lanmap/cli.py`, `lanmap/__main__.py` | Командная строка `python -m lanmap <команда>` |
 | | `lanmap/server.py` | Локальный веб-интерфейс (`serve`): токен, проверка `Host`, API для кнопок отчёта |
+| | `lanmap/tray.py` | Значок Windows, меню и уведомления. Сервер запускает по `POST /api/tray` после нажатия «Свернуть в трей» |
+| | `lanmap/monitor.py`, `lanmap/monitor_page.py` | Фоновый опрос устройств, история по подсети и MAC шлюза, журнал `/monitor`, настройки `/api/monitor` |
 | | `lanmap/ops.py` | Действия владельца, общие для CLI и сервера: подписать, отметить, перепроверить, войти в роутер |
 | Сбор | `lanmap/scan.py` | Порядок этапов среза, паспорт полноты (`Passport`), папка среза |
 | | `lanmap/netinfo.py` | Сети компьютера, выбор интерфейса (Windows) |
@@ -96,6 +98,7 @@ build.build   ─► devices.make_model ─► identify.resolve ─► security 
 | `registry.json` | подписи устройств | `registry.save`, `ops.sign` |
 | `findings.json` | статусы находок и итоги перепроверок | `security.set_status`, `security.record_recheck` |
 | `checklist.json` | отметки E6, E8 | `checklist.set_mark` |
+| `monitor.json` | порог возвращения, пауза, последние наблюдения по сетям и до 250 событий журнала | `monitor.Monitor` |
 | `fingerprints/*.json` | свои правила опознания (`ai.json` — из «Разобрать с ИИ») | владелец, `ops.ai_apply` |
 | `oui.txt` | база производителей | `oui` |
 | `external/` | отчёты по срезам, принесённым извне | `build` |

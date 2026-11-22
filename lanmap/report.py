@@ -1183,6 +1183,7 @@ def render(model: dict) -> str:
     <span class="spacer"></span>
     <span id="scanst" class="scanst" hidden></span>
     <button class="iconbtn live-only findbtn" id="find" {tip("Найти устройство: выключи или включи его — увидишь, какое это")}>{icon("search", "s")}<span>Найти устройство</span></button>
+    <!-- tray-controls -->
     <button class="iconbtn live-only scanbtn" id="scan" {tip("Сделать новый срез сети")}>{icon("refresh", "s")}<span>Срез</span></button>
     <button class="iconbtn askbtn tip-l" id="askai" data-askai="{live({"text": askai_mod.text(model), "raw": askai_mod.raw(model)})}" {tip("Обезличенный отчёт для чата с ИИ")}>{icon("bot", "s")}<span>Спросить ИИ</span></button>
     <button class="iconbtn live-only tip-l" id="setup" {tip("Настройка: база производителей, вход в роутер, паспорт роутера")}>{icon("gear", "s")}</button>
@@ -1243,7 +1244,7 @@ def empty_page() -> str:
 <style>{CSS}</style></head><body>
 {ICONS}
 <div class="first">
-<div class="top"><h1>{icon("devices", "l")}LanMap</h1><span class="spacer"></span>
+<div class="top"><h1>{icon("devices", "l")}LanMap</h1><span class="spacer"></span><!-- tray-controls -->
 <button class="iconbtn quitbtn" id="quit" title="Выключить LanMap" aria-label="Выключить LanMap">{icon("power", "s")}</button></div>
 <p class="muted">Срезов ещё нет. Два шага настройки необязательны, но с ними устройства опознаются лучше.
 Программа только читает сеть и ничего не меняет на устройствах.</p>

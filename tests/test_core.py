@@ -1892,7 +1892,8 @@ class PortableTest(unittest.TestCase):
         """README в архиве ссылается на docs/ и AGENTS.md: всё, на что ссылаются .md, едет в архив (FILES)."""
         import importlib.util
         import shutil
-        spec = importlib.util.spec_from_file_location("build_portable", PACKAGE_DIR.parent / "tools" / "build_portable.py")
+        project = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location("build_portable", project / "tools" / "build_portable.py")
         bp = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(bp)
         with tempfile.TemporaryDirectory() as tmp:

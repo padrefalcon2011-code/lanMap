@@ -1029,6 +1029,35 @@ if(L){
 
 # Настройка (только в веб-интерфейсе): база производителей, вход в роутер, паспорт роутера для заявки.
 # Общая для пустой первой страницы (встроена в неё) и отчёта (окно по шестерёнке). Без сервера не запускается.
+TRAY_JS = r"""
+(() => {
+ const button = document.getElementById('tray');
+ const status = document.getElementById('tray-status');
+ button.addEventListener('click', async () => {
+  button.disabled = true;
+  status.textContent = '';
+  try {
+   const response = await fetch('/api/tray', {method:'POST', body:'{}',
+    headers:{'Content-Type':'application/json','X-LanMap-Token':window.LANMAP.token}});
+   if (!response.ok) throw new Error((await response.json()).error);
+  } catch (error) {
+   status.textContent = error.message || 'Не удалось свернуть LanMap в трей';
+   button.disabled = false;
+   return;
+  }
+  status.textContent = 'LanMap работает в трее. Эту вкладку можно закрыть.';
+  if (!document.getElementById('tray-journal')) {
+   const journal = document.createElement('a');
+   journal.id = 'tray-journal';
+   journal.href = '/monitor';
+   journal.textContent = 'Журнал присмотра';
+   button.after(journal);
+  }
+  window.close();
+ });
+})();
+"""
+
 ASK_JS = r"""
 // Обезличенные промты: весь отчёт или одно решение. Работает и в файле отчёта.
 (function(){

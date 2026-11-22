@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import re
 import secrets
 import threading
@@ -16,7 +17,7 @@ import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from lanmap import ops
 
@@ -171,10 +172,14 @@ class State:
         self.token = token
         self.live_setup = live_setup
         self.watcher: Watcher | None = None
+        self.monitor = None
+        self.tray = None
+        self.tray_lock = threading.Lock()
         self.watch_lock = threading.Lock()
         self.write_lock = threading.Lock()
         self.scan_lock = threading.Lock()
         self.scan = {"running": False, "stages": [], "error": None, "snapshot": None}
+        self.stopping = False
         self.jobs = {"oui": Job(), "probe": Job(), "link": Job()}
 
     def scan_status(self) -> dict:
@@ -185,11 +190,38 @@ class State:
 
     def start_scan(self) -> bool:
         with self.scan_lock:
-            if self.scan["running"]:
+            if self.scan["running"] or self.stopping:
                 return False
             self.scan = {"running": True, "stages": [], "error": None, "snapshot": None, "started": time.time()}
         threading.Thread(target=self._scan, daemon=True, name="lanmap-scan").start()
         return True
+
+    def prepare_shutdown(self) -> bool:
+        with self.scan_lock:
+            if self.scan["running"]:
+                return False
+            self.stopping = True
+        self.stop_watch()
+        return True
+
+    def start_tray(self, httpd) -> None:
+        if os.name != "nt":
+            raise ops.OpError("Значок LanMap в трее доступен в Windows")
+        from lanmap.tray import Tray
+        with self.tray_lock:
+            with self.scan_lock:
+                if self.stopping:
+                    raise ops.OpError("LanMap завершает работу")
+            if self.tray is None or self.tray.stopped.is_set():
+                self.tray = Tray(httpd)
+                self.tray.start()
+            tray = self.tray
+        tray.wait_ready()
+
+    def close_tray(self) -> None:
+        with self.tray_lock:
+            if self.tray is not None:
+                self.tray.close()
 
     def start_watch(self) -> Watcher:
         with self.watch_lock:
@@ -307,15 +339,24 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._text(403, "Неверный адрес. Открой ссылку, которую напечатал python -m lanmap serve.")
         url = urlsplit(self.path)
-        if url.path == "/":
-            given = parse_qs(url.query).get("t", [""])[0]
+        monitor = self.state.monitor
+        if url.path == "/" or (url.path == "/monitor" and monitor is not None):
+            query = parse_qs(url.query)
+            given = query.get("t", [""])[0]
+            event = query.get("e", [""])[0] if url.path == "/monitor" else ""
+            event = int(event) if re.fullmatch(r"[0-9]{1,18}", event) else None
             if given:
                 if not token_ok(given, self.state.token):
                     return self._text(403, "Ссылка устарела: открой новую из окна python -m lanmap serve.")
                 cookie = f"{self._cookie_name()}={self.state.token}; Path=/; HttpOnly; SameSite=Strict"
-                return self._send(303, b"", "text/plain", {"Location": "/", "Set-Cookie": cookie})
+                location = url.path + (f"?e={event}" if event is not None else "")
+                return self._send(303, b"", "text/plain", {"Location": location, "Set-Cookie": cookie})
             if not self._cookie_ok():
                 return self._text(403, "Нет доступа. Открой ссылку, которую напечатал python -m lanmap serve.")
+            if url.path == "/monitor":
+                from lanmap.monitor_page import render
+                html = render(monitor.status(), self.state.token, event)
+                return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
             return self._page()
         if url.path.startswith("/api/"):
             if not self._header_ok():
@@ -345,6 +386,14 @@ class Handler(BaseHTTPRequestHandler):
         else:
             from lanmap.report import empty_page
             html = empty_page()
+        if os.name == "nt" and "<!-- tray-controls -->" in html:
+            from lanmap.report_assets import TRAY_JS
+            tray_controls = '<button class="iconbtn" id="tray" type="button">Свернуть в трей</button>'
+            if self.state.monitor is not None:
+                tray_controls += '<a id="tray-journal" href="/monitor">Журнал присмотра</a>'
+            tray_controls += '<span id="tray-status" class="scanst" role="status"></span>'
+            html = html.replace("<!-- tray-controls -->", tray_controls, 1)
+            html = html.replace("</body>", f"<script>{TRAY_JS}</script></body>", 1)
         boot = f"<script>window.LANMAP={json.dumps({'token': self.state.token})};</script>"
         html = html.replace("<head>", "<head>" + boot, 1) if "<head>" in html else boot + html
         self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
@@ -376,13 +425,29 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "нужен объект JSON"})
         route = urlsplit(self.path).path
         if route == "/api/shutdown":
-            if self.state.scan_status()["running"]:
+            if not self.state.prepare_shutdown():
                 return self._json(409, {"error": "Идёт срез — выключить можно, когда он закончится"})
-            self.state.stop_watch()
             self._json(200, {"ok": True})
             # Остановить сервер из его же обработчика можно только из другого потока
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return None
+        if route == "/api/tray":
+            try:
+                self.state.start_tray(self.server)
+            except ops.OpError as exc:
+                return self._json(409, {"error": str(exc)})
+            except OSError as exc:
+                return self._json(500, {"error": str(exc)})
+            return self._json(200, {"ok": True})
+        monitor = self.state.monitor
+        if route == "/api/monitor" and monitor is not None:
+            try:
+                monitor.settings(body)
+            except ops.OpError as exc:
+                return self._json(400, {"error": str(exc)})
+            except OSError as exc:
+                return self._json(500, {"error": str(exc)})
+            return self._json(200, {"ok": True})
         if route == "/api/scan":
             started = self.state.start_scan()
             return self._json(202 if started else 409, self.state.scan_status())
@@ -407,6 +472,8 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as exc:
                 return self._json(500, {"error": f"Ошибка LanMap: {exc}"})
             self.state.stop_watch()  # «Найти устройство» перезапустится уже без роутера
+            if self.state.monitor is not None:
+                self.state.monitor.refresh_router()
             return self._json(200, {"ok": True, "removed": removed})
         if route.startswith("/api/camera/"):
             return self._camera(route[len("/api/camera/"):], body)
@@ -461,6 +528,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # текст ошибки не показываем: мало ли что в нём окажется
             return self._json(500, {"error": f"Ошибка LanMap при входе в роутер ({exc.__class__.__name__})"})
         self.state.stop_watch()  # «Найти устройство» перезапустится уже с роутером
+        if self.state.monitor is not None:
+            self.state.monitor.refresh_router()
         try:
             reads = ops.router_test(saved["host"])
         except Exception:
@@ -569,6 +638,12 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     state: State
 
+    def server_close(self) -> None:
+        state = getattr(self, "state", None)
+        if state is not None:
+            state.close_tray()
+        super().server_close()
+
 
 def make_server(port: int = DEFAULT_PORT, token: str | None = None, live_setup=None) -> Server:
     """Сервер на петлевом адресе. Если порт занят — любой свободный. live_setup — подмена опроса в тестах."""
@@ -582,5 +657,8 @@ def make_server(port: int = DEFAULT_PORT, token: str | None = None, live_setup=N
     return httpd
 
 
-def url_for(httpd: Server) -> str:
-    return f"http://{LOOPBACK}:{httpd.server_address[1]}/?t={httpd.state.token}"
+def url_for(httpd: Server, path: str = "/", event: int | None = None) -> str:
+    params = {"t": httpd.state.token}
+    if event is not None:
+        params["e"] = str(event)
+    return f"http://{LOOPBACK}:{httpd.server_address[1]}{path}?{urlencode(params)}"
