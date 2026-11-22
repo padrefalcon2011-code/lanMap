@@ -260,6 +260,9 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
         acts.insert(1 if dev.get("mac") else 0,
                     f'<button class="act live-only" data-snap="{e(dev["key"])}" title="Стоп-кадр с камеры по ONVIF: '
                     f'видно, куда она смотрит. Пароль камеры вводишь ты">{icon("camera", "s")}<span class="lbl">Кадр</span></button>')
+    if dev["ips"] and not dev.get("is_local") and dev.get("alive"):
+        acts.append(f'<button class="act live-only" data-link="{e(dev["ips"][0])}" title="Минуту пинговать устройство и роутер: '
+                    f'где теряется связь">{icon("wifi3", "s")}<span class="lbl">Тест связи</span></button>')
     acts.append(f'<button class="act" data-share="{live(share_mod.payload(dev))}" title="Обезличенный рассказ об устройстве '
                 f'для заявки на GitHub: так LanMap научится его узнавать">{icon("question", "s")}'
                 f'<span class="lbl">Помочь опознать</span></button>')
@@ -301,7 +304,8 @@ def _detail(dev: dict, found: list[dict] | None = None) -> str:
             f'</span><span class="tmain"><b>{e(dev["title"])}</b><span class="sub">{e(dev.get("subtitle") or ident.get("type_label") or "")}</span></span>'
             f'<button class="iconbtn dclose" title="Закрыть (Esc)" aria-label="Закрыть">{icon("x", "s")}</button></div>')
     return (f'<div class="tdetail" hidden>{head}<div class="dgrid"><div class="facts">{facts_html}</div>'
-            f'<div class="ports">{ports}</div></div>{slines}<div class="acts">{"".join(acts)}</div>{why}</div>')
+            f'<div class="ports">{ports}</div></div>{slines}<div class="acts">{"".join(acts)}</div>'
+            f'<div class="linkres" hidden></div>{why}</div>')
 
 
 def _sec_chip(found: list[dict]) -> str:

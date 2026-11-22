@@ -490,6 +490,53 @@ class ContestedIpTest(unittest.TestCase):
                 ops.ip_check("198.51.100.7", arp=lambda: None)  # чужая подсеть не спрашивается
 
 
+class LinkTestTest(unittest.TestCase):
+    """Минутный тест связи: две серии ping — где теряются ответы."""
+
+    def test_series_and_verdict(self):
+        from lanmap import linktest
+        ticks = []
+        # до роутера чисто, до устройства теряется каждый четвёртый ответ
+        n = {"192.0.2.10": 0}
+
+        def echo(ip):
+            if ip == "192.0.2.1":
+                return 2
+            n[ip] += 1
+            return None if n[ip] % 4 == 0 else 30
+        r = linktest.run("192.0.2.10", "192.0.2.1", seconds=8, echo=echo, on_tick=ticks.append, sleep=lambda s: None)
+        self.assertEqual((r["target"]["sent"], r["target"]["lost"], r["target"]["median"]), (8, 2, 30))
+        self.assertEqual((r["gw"]["lost"], r["level"]), (0, "warn"))
+        self.assertIn("до устройства ответы теряются", r["text"])
+        self.assertEqual(len(ticks), 8)
+        self.assertEqual(ticks[-1]["done"], 8)
+        # теряется уже до роутера
+        r = linktest.run("192.0.2.10", "192.0.2.1", seconds=10, sleep=lambda s: None,
+                         echo=lambda ip: None if ip == "192.0.2.1" else 3)
+        self.assertEqual(r["level"], "crit")
+        self.assertIn("уже до роутера", r["text"])
+        # всё хорошо; адрес — сам роутер: одна серия
+        r = linktest.run("192.0.2.1", "192.0.2.1", seconds=5, echo=lambda ip: 1, sleep=lambda s: None)
+        self.assertIsNone(r["gw"])
+        self.assertEqual(r["level"], "good")
+        # устройство молчит, роутер отвечает
+        r = linktest.run("192.0.2.10", "192.0.2.1", seconds=5, sleep=lambda s: None,
+                         echo=lambda ip: 1 if ip == "192.0.2.1" else None)
+        self.assertIn("не ответило ни разу", r["text"])
+
+    def test_only_local_subnet(self):
+        from unittest import mock
+        from lanmap import ops
+        net = mock.Mock(local_ip="192.0.2.5", network="192.0.2.0/24", gateway="192.0.2.1", if_index=1, mac=None)
+        with mock.patch.object(ops, "pick_network", lambda: net):
+            self.assertEqual(ops.link_target("192.0.2.10"), "192.0.2.1")
+            for bad in ("198.51.100.7", "192.0.2.5", "не адрес"):
+                with self.assertRaises(ops.OpError):
+                    ops.link_target(bad)
+            with self.assertRaises(ops.OpError):
+                ops.link_test("192.0.2.10", seconds=1)
+
+
 class RouterCompletenessTest(unittest.TestCase):
     """Модуль роутера сам объявляет, какие пробросы читает: молчание не значит «пробросов нет»."""
 

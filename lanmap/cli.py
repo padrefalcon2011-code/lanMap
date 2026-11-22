@@ -332,6 +332,26 @@ def cmd_launch(args) -> int:
     return 0
 
 
+def cmd_link(args) -> int:
+    """Минутный тест связи: ping до устройства и до роутера раз в секунду."""
+    from lanmap import linktest, ops
+
+    def tick(p):
+        if p["done"] % 10 == 0 or p["done"] == p["total"]:
+            print(f'  {p["done"]} с из {p["total"]}: ' + linktest.line("устройство", p["target"])
+                  + ("; " + linktest.line("роутер", p["gw"]) if p.get("gw") else ""), flush=True)
+    try:
+        print(f"Тест связи с {args.ip}: {args.seconds} с, ping раз в секунду (и до роутера для сравнения)")
+        r = ops.link_test(args.ip, args.seconds, on_tick=tick)
+    except ops.OpError as exc:
+        raise SystemExit(str(exc))
+    print(linktest.line("До устройства", r["target"]))
+    if r["gw"]:
+        print(linktest.line("До роутера   ", r["gw"]))
+    print({"good": "✓", "warn": "!", "crit": "✗"}[r["level"]], r["text"])
+    return 0
+
+
 def cmd_ai(args) -> int:
     from lanmap import ops
     try:
@@ -437,6 +457,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("action", choices=["ssh", "smb", "rdp", "vlc", "telnet", "wol"])
     p.add_argument("--ack", action="store_true", help="для Telnet: понимаю, что пароль пойдёт открытым текстом")
     p.set_defaults(func=cmd_launch)
+
+    p = sub.add_parser("link", help="минутный тест связи: ping до устройства и до роутера, медиана и потери")
+    p.add_argument("ip")
+    p.add_argument("--seconds", type=int, default=60)
+    p.set_defaults(func=cmd_link)
 
     p = sub.add_parser("ai", help="«Разобрать с ИИ»: промт для твоего ИИ и приём его ответа (в реестр и правила)")
     p.add_argument("action", choices=["prompt", "check", "apply"])

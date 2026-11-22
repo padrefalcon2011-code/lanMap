@@ -407,6 +407,30 @@ def launch(target: str, action: str, ack: bool = False, **deps) -> dict:
 
 # --- «Разобрать с ИИ»: промт для ИИ владельца и приём ответа (lanmap/aiparse.py) --------------------
 
+def link_target(ip: str) -> str | None:
+    """Проверить адрес для теста связи (IPv4 своей подсети, не этот компьютер) → адрес роутера для второй серии."""
+    import ipaddress
+    from lanmap.collectors import ScanContext
+    try:
+        ipaddress.IPv4Address(ip)
+    except ValueError:
+        raise OpError("Нужен IPv4-адрес") from None
+    net = pick_network()
+    ctx = ScanContext(local_ip=net.local_ip, network=net.network, gateway=net.gateway, if_index=net.if_index,
+                      local_mac=net.mac)
+    if not ctx.in_scope(ip) or ip == ctx.local_ip:
+        raise OpError("Адрес не из локальной подсети этого компьютера")
+    return ctx.gateway if ctx.gateway and ctx.in_scope(ctx.gateway) else None
+
+
+def link_test(ip: str, seconds: int = 60, on_tick=None, echo=None) -> dict:
+    """Минутный тест связи до устройства и до роутера (lanmap.linktest). Только ICMP, только своя подсеть."""
+    from lanmap import linktest
+    if not 5 <= seconds <= 600:
+        raise OpError("Длительность — от 5 до 600 секунд")
+    return linktest.run(ip, link_target(ip), seconds, echo=echo, on_tick=on_tick)
+
+
 def ip_check(ip: str, tries: int = 5, arp=None) -> dict:
     """«Спорный адрес»: спросить IP по ARP несколько раз (только чтение, только своя подсеть) → какие MAC ответили.
 

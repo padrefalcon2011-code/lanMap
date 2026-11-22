@@ -138,6 +138,11 @@ class Job:
         threading.Thread(target=self._run, args=(fn,), daemon=True, name="lanmap-job").start()
         return True
 
+    def update(self, **kw) -> None:
+        """Ход долгого действия — страница видит его при опросе (тест связи)."""
+        with self.lock:
+            self.data.update(kw)
+
     def _run(self, fn) -> None:
         try:
             out = {"result": fn()}
@@ -160,7 +165,7 @@ class State:
         self.write_lock = threading.Lock()
         self.scan_lock = threading.Lock()
         self.scan = {"running": False, "stages": [], "error": None, "snapshot": None}
-        self.jobs = {"oui": Job(), "probe": Job()}
+        self.jobs = {"oui": Job(), "probe": Job(), "link": Job()}
 
     def scan_status(self) -> dict:
         with self.scan_lock:
@@ -312,6 +317,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {**ops.oui_status(), **self.state.jobs["oui"].status()})
             if url.path == "/api/probe":
                 return self._json(200, self.state.jobs["probe"].status())
+            if url.path == "/api/link":
+                return self._json(200, self.state.jobs["link"].status())
             if url.path == "/api/router":
                 try:
                     return self._json(200, ops.router_status())
@@ -388,6 +395,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._launch(body)
         if route == "/api/ai/check":
             return self._ai_check(body)
+        if route == "/api/link":  # минутный тест связи: только ICMP, отчёт не пересобирает
+            job = self.state.jobs["link"]
+            try:
+                ip = self._str(body, "ip")
+                ops.link_target(ip)  # проверка адреса заранее: ошибка — сразу, а не в фоне
+            except ops.OpError as exc:
+                return self._json(400, {"error": str(exc)})
+            started = job.start(lambda: ops.link_test(ip, on_tick=lambda p: job.update(progress=p)))
+            if started:
+                job.update(ip=ip)
+            return self._json(202 if started else 409, job.status())
         if route == "/api/ipcheck":  # только читает сеть, отчёт не пересобирает
             try:
                 return self._json(200, {"ok": True, **ops.ip_check(self._str(body, "ip"))})

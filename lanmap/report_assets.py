@@ -253,6 +253,10 @@ background:color-mix(in srgb,var(--g) 16%,var(--card))}
 .tmarks{grid-area:marks;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
 .flag{display:inline-flex;align-items:center;color:var(--muted)}
 .flag.warn{color:var(--warn)}.flag.acc{color:var(--accent)}.flag.crit{color:var(--crit)}
+.linkres{margin-top:8px;padding:8px 10px;border-radius:9px;background:var(--chip);font-size:13px;display:grid;gap:3px}
+.linkres[hidden]{display:none}.linkres .lv1{font-weight:600;display:flex;align-items:center;gap:6px}
+.linkres.good .lv1{color:var(--good)}.linkres.warn{background:var(--warn-soft)}.linkres.warn .lv1{color:var(--warn-text)}
+.linkres.crit{background:var(--crit-soft)}.linkres.crit .lv1{color:var(--crit)}
 .certw{display:inline-flex;align-items:center;gap:2px;margin-left:5px;color:var(--warn);font-weight:600}.certw.crit{color:var(--crit)}
 .tdetail{padding:0 12px 12px;border-top:1px solid var(--line)}
 .tdetail[hidden]{display:none}
@@ -801,6 +805,25 @@ if(L){
    catch(e){rc.lastChild.textContent='перепроверить';}});
   $$('[data-st]',c).forEach(b=>b.addEventListener('click',async()=>{
    try{await api('/api/finding',{check:d.check,key:d.key,status:b.dataset.st,reason:inp.value},c);back(c.dataset.id);}catch(e){}}));});
+
+ // «Тест связи»: минуту ping до устройства и до роутера; ход — опросом /api/link
+ const linkRow=(n,s)=>s?`<div>${esc(n)}: <b>${s.median==null?'—':s.median+' мс'}</b> медиана · потеряно <b>${s.lost}</b> из ${s.sent}</div>`:'';
+ $$('[data-link]').forEach(b=>b.addEventListener('click',async ev=>{ev.stopPropagation();
+  const box=b.closest('.tdetail').querySelector('.linkres');box.hidden=false;box.className='linkres';
+  box.innerHTML=`${ico('wifi3')} Запускаю тест связи…`;
+  try{await api('/api/link',{ip:b.dataset.link},b);}catch(e){box.textContent=e.message;return;}
+  b.disabled=true;
+  const tick=async()=>{let j;try{j=await (await fetch('/api/link',{headers:{'X-LanMap-Token':L.token}})).json();}
+    catch(e){box.textContent='Сервер LanMap не отвечает';b.disabled=false;return;}
+   const p=j.progress;
+   if(j.running){box.innerHTML=`<div>${ico('wifi3')} Идёт тест: <b>${p?p.done:0}</b> с из ${p?p.total:60}</div>`
+     +(p?linkRow('до устройства',p.target)+linkRow('до роутера',p.gw):'');setTimeout(tick,1000);return;}
+   b.disabled=false;
+   if(j.error){box.textContent=j.error;return;}
+   const r=j.result;box.className='linkres '+r.level;
+   box.innerHTML=`<div class="lv1">${ico(r.level==='good'?'check':'alert')} ${esc(r.text)}</div>`
+    +linkRow('до устройства',r.target)+linkRow('до роутера',r.gw);};
+  setTimeout(tick,1000);}));
 
  // «Спорный адрес»: пять ARP-запросов — ответят ли разные MAC
  $$('[data-ipcheck]').forEach(b=>b.addEventListener('click',async ev=>{ev.stopPropagation();

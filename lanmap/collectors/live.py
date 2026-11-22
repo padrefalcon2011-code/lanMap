@@ -52,6 +52,11 @@ def _ipaddr(ip: str) -> int:
 
 def icmp_echo(ip: str, timeout_ms: int = 400) -> bool:
     """Ответил ли адрес на эхо. «Узел недоступен» от собственного адреса Windows ответом не считается."""
+    return icmp_rtt(ip, timeout_ms) is not None
+
+
+def icmp_rtt(ip: str, timeout_ms: int = 400) -> int | None:
+    """Время ответа на эхо в мс или None — ответа нет (или «узел недоступен» от собственного адреса Windows)."""
     api = ctypes.windll.iphlpapi
     api.IcmpCreateFile.restype = ctypes.c_void_p
     api.IcmpSendEcho.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_char_p, ctypes.c_ushort, ctypes.c_void_p,
@@ -66,9 +71,9 @@ def icmp_echo(ip: str, timeout_ms: int = 400) -> bool:
         dest = _ipaddr(ip)
         got = api.IcmpSendEcho(handle, dest, _PAYLOAD, len(_PAYLOAD), None, buf, size, timeout_ms)
         if not got:
-            return False
+            return None
         reply = _EchoReply.from_buffer(buf)
-        return reply.Status == 0 and reply.Address == dest
+        return int(reply.RoundTripTime) if reply.Status == 0 and reply.Address == dest else None
     finally:
         api.IcmpCloseHandle(handle)
 
