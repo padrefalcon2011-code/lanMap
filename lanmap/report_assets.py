@@ -247,7 +247,8 @@ background:color-mix(in srgb,var(--g) 16%,var(--card))}
 .meter i.f{background:var(--accent)}
 .tmarks{grid-area:marks;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
 .flag{display:inline-flex;align-items:center;color:var(--muted)}
-.flag.warn{color:var(--warn)}.flag.acc{color:var(--accent)}
+.flag.warn{color:var(--warn)}.flag.acc{color:var(--accent)}.flag.crit{color:var(--crit)}
+.certw{display:inline-flex;align-items:center;gap:2px;margin-left:5px;color:var(--warn);font-weight:600}.certw.crit{color:var(--crit)}
 .tdetail{padding:0 12px 12px;border-top:1px solid var(--line)}
 .tdetail[hidden]{display:none}
 .dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:10px}

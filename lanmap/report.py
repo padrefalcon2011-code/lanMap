@@ -9,7 +9,9 @@ from __future__ import annotations
 import html
 import ipaddress
 import json
+import ssl
 from collections import Counter
+from datetime import datetime, timezone
 
 from lanmap import aiparse as aiparse_mod
 from lanmap import askai as askai_mod
@@ -18,7 +20,7 @@ from lanmap import security as sec_mod
 from lanmap import share as share_mod
 from lanmap import snapshot as snapshot_mod
 from lanmap.recheck import SUPPORTED as RECHECKABLE
-from lanmap.devices import connection_text
+from lanmap.devices import CERT_SOON, connection_text
 from lanmap.identify import GROUPS, LEVEL_NAMES, TYPES
 from lanmap.report_assets import CSS, ICONS, JS, SETUP_JS
 
@@ -152,13 +154,36 @@ def _meter(conf: int) -> str:
     return f'<span class="meter" title="{e(label)}" role="img" aria-label="{e(label)}">{cells}</span>'
 
 
+def _cert_text(c: dict) -> str:
+    """«сертификат до 05.03.2027 (12 дн.)» — на момент среза."""
+    try:
+        until = datetime.fromtimestamp(ssl.cert_time_to_seconds(c["not_after"]), timezone.utc).strftime("%d.%m.%Y")
+    except (ValueError, KeyError, OSError):
+        until = "?"
+    d = c.get("days")
+    left = "истёк" if d is not None and d < 0 else f"{d} дн." if d is not None else ""
+    return f"сертификат HTTPS до {until}" + (f" ({left} на момент среза)" if left else "")
+
+
+def _cert_soon(s: dict) -> bool:
+    d = (s.get("cert") or {}).get("days")
+    return d is not None and d < CERT_SOON
+
+
 def _port_chip(s: dict, full: bool = False) -> str:
     name = s.get("name") or ""
-    tip = " · ".join(x for x in (name, (s.get("http") or {}).get("title"), RISKY_PORTS.get(s["port"])) if x)
+    cert = s.get("cert") or {}
+    tip = " · ".join(x for x in (name, (s.get("http") or {}).get("title"), RISKY_PORTS.get(s["port"]),
+                                 _cert_text(cert) if cert else "") if x)
     cls = "crit" if s["port"] in RISKY_PORTS else ""
     label = f'{s["port"]}' + (f" {name}" if full and name else "")
     warn = icon("alert", "s") if s["port"] in RISKY_PORTS else ""
-    return f'<span class="pc {cls}" title="{e(tip)}">{warn}{e(label)}</span>'
+    soon = ""
+    if _cert_soon(s):
+        expired = cert["days"] < 0
+        soon = (f'<span class="certw{" crit" if expired else ""}">{icon("lock", "s")}'
+                f'{"истёк" if expired else str(cert["days"]) + " дн."}</span>')
+    return f'<span class="pc {cls}" title="{e(tip)}">{warn}{e(label)}{soon}</span>'
 
 
 def _flags(dev: dict) -> str:
@@ -173,6 +198,11 @@ def _flags(dev: dict) -> str:
         out.append(f'<span class="flag acc">{icon("router", "s", "Шлюз (выход в интернет)")}</span>')
     if dev["private_mac"]:
         out.append(f'<span class="flag">{icon("shuffle", "s", "Частный (случайный) MAC телефона или ноутбука")}</span>')
+    soon = [s for s in dev["services"] if _cert_soon(s)]
+    if soon:
+        expired = any(s["cert"]["days"] < 0 for s in soon)
+        label = "; ".join("Порт " + str(s["port"]) + ": " + _cert_text(s["cert"]) for s in soon)
+        out.append(f'<span class="flag {"crit" if expired else "warn"}">{icon("lock", "s", label)}</span>')
     if dev.get("duplicate_mac"):
         out.append(f'<span class="flag warn">{icon("link", "s", "Общий MAC с другим устройством: мост или ретранслятор")}</span>')
     if r.get("segment") and r["segment"].lower() not in ("home", "домашняя сеть"):

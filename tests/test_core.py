@@ -210,6 +210,40 @@ class ScanPassportTest(unittest.TestCase):
         self.assertNotIn("Роутер (пропущен)", about)
 
 
+class CertExpiryTest(unittest.TestCase):
+    def snap(self, not_after):
+        snap = Path(tempfile.mkdtemp(dir=TMP.name)) / "2026-01-05_000000"
+        write_json(snap / "meta.json", {"interface": {"local_ip": "192.0.2.5", "network": "192.0.2.0/24"},
+                                        "started": "2025-12-20T00:00:00"})
+        write_json(snap / "raw" / "ping.json", {"192.0.2.10": {"alive": True}})
+        write_json(snap / "raw" / "neighbors.json", [{"ip": "192.0.2.10", "mac": MAC_B}])
+        write_json(snap / "raw" / "ports.json", {"tested": [443], "open": {"192.0.2.10": [443]}})
+        write_json(snap / "raw" / "probes.json", [{
+            "ip": "192.0.2.10", "port": 443, "kind": "http", "tls_version": "TLSv1.3",
+            "response": "HTTP/1.1 200 OK\r\n\r\n",
+            "cert": {"subject": {"commonName": "device.example"}, "not_after": not_after}}])
+        return finish_snapshot(snap)
+
+    def test_days_and_report(self):
+        """Дни до конца сертификата — на дату среза; меньше 30 — значок у плитки и у порта, истёк — красный."""
+        from lanmap import devices
+        from lanmap.build import make_model
+        from lanmap.report import _detail, _flags
+        self.assertEqual(devices.cert_days("Jan  1 00:00:00 2026 GMT", "2025-12-20T00:00:00"), 12)
+        self.assertIsNone(devices.cert_days("не дата", "2025-12-20T00:00:00"))
+        dev = make_model(self.snap("Jan  1 00:00:00 2026 GMT"))["devices"][0]
+        svc = next(s for s in dev["services"] if s["port"] == 443)
+        self.assertEqual(svc["cert"]["days"], 12)
+        self.assertIn("certw", _detail(dev))
+        self.assertIn("сертификат HTTPS до 01.01.2026 (12 дн. на момент среза)", _flags(dev))
+        old = make_model(self.snap("Dec  1 00:00:00 2025 GMT"))["devices"][0]
+        self.assertIn('flag crit', _flags(old))
+        self.assertIn("истёк", _detail(old))
+        far = make_model(self.snap("Jan  1 00:00:00 2030 GMT"))["devices"][0]
+        self.assertNotIn("certw", _detail(far))
+        self.assertNotIn("сертификат HTTPS", _flags(far))
+
+
 class DnsTest(unittest.TestCase):
     def test_roundtrip(self):
         name = dnswire.encode_name("cam._http._tcp.local")

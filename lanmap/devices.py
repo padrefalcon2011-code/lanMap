@@ -5,9 +5,11 @@
 """
 from __future__ import annotations
 
+import datetime as _dt
 import html
 import ipaddress
 import re
+import ssl
 from pathlib import Path
 
 from lanmap import oui
@@ -78,6 +80,23 @@ class _Dev:
         item.update(extra)
         if item not in self.evidence:
             self.evidence.append(item)
+
+
+CERT_SOON = 30  # дней: меньше — сертификат «скоро истекает»
+
+
+def cert_days(not_after: str | None, at: str | None) -> int | None:
+    """Сколько полных дней сертификат ещё действует на момент среза (отрицательное — уже истёк).
+
+    Считаем от даты среза, а не от «сейчас»: отчёт говорит о том, что видел срез, и не меняется при пересборке."""
+    if not not_after:
+        return None
+    try:
+        until = ssl.cert_time_to_seconds(not_after)
+        when = _dt.datetime.fromisoformat(at).timestamp() if at else _dt.datetime.now().timestamp()
+    except (ValueError, TypeError):
+        return None
+    return int((until - when) // 86400)
 
 
 def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
@@ -184,6 +203,9 @@ def build(snapshot: Path, aliases: dict[str, str] | None = None) -> list[dict]:
         if pr.get("tls_version"):
             svc["tls"] = pr["tls_version"]
         cert = pr.get("cert") or {}
+        days = cert_days(cert.get("not_after"), meta.get("started"))
+        if days is not None:
+            svc["cert"] = {"not_after": cert["not_after"], "days": days}
         if cert.get("subject"):
             subj = cert["subject"]
             dev.facts["tls"].append({"port": port, **cert})
