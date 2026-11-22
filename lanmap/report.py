@@ -281,6 +281,8 @@ def _tile(dev: dict, changes: dict | None, found: list[dict] | None = None) -> s
     risky = any(s["port"] in RISKY_PORTS for s in dev["services"]) or any(
         f["priority"] <= 2 and f["status"] not in sec_mod.QUIET_STATUSES for f in found)
     status = "on" if dev["alive"] else "off"
+    is_new = any(x["what"] == "new" for x in items)
+    live_found = any(f["status"] not in sec_mod.QUIET_STATUSES for f in found)
     dot_label = "в сети" if dev["alive"] else "не отвечало"
 
     ports = dev["services"]
@@ -298,7 +300,8 @@ def _tile(dev: dict, changes: dict | None, found: list[dict] | None = None) -> s
                                "risky" if risky else "") if x)
     ip = ", ".join(dev["ips"]) or (dev["mac"] or "")
     return (f'<article class="{cls}" id="d-{e(dev["key"])}" data-group="{e(ident["group"])}" data-status="{status}" '
-            f'data-conf="{conf}" data-changed="{1 if items else 0}" data-slot="{e(map_slot(dev))}" data-search="{e(search)}">'
+            f'data-conf="{conf}" data-changed="{1 if items else 0}" data-new="{1 if is_new else 0}" '
+            f'data-find="{1 if live_found else 0}" data-slot="{e(map_slot(dev))}" data-search="{e(search)}">'
             f'<button class="thead" aria-expanded="false">'
             f'<span class="ticon" {gstyle(ident["group"])}>{icon(type_icon(ident["type"]), "", ident["type_label"])}'
             f'<i class="dot {"" if dev["alive"] else "off"}" title="{dot_label}"></i></span>'
@@ -525,7 +528,7 @@ def _changes(model: dict) -> str:
     if p.get("new") or p.get("gone"):
         parts.append(f'<div class="note">{icon("shuffle", "s")}<span>Случайный MAC: '
                      f'+{p.get("new", 0)} / −{p.get("gone", 0)}. Телефоны меняют такой MAC, поштучно не сравниваются.</span></div>')
-    return (f'<details class="panel" id="changes" open>{head}<div class="panel-body">{notes}{"".join(parts)}</div></details>')
+    return (f'<details class="panel" id="changes">{head}<div class="panel-body">{notes}{"".join(parts)}</div></details>')
 
 
 # --- порядок в сети (чек-лист E1–E9) ------------------------------------------------------------
@@ -615,7 +618,7 @@ def _checklist(model: dict) -> str:
             f'<span class="sbar" title="{cl["score"]} из {cl["total"]} критериев"><i style="width:{share}%"></i></span>'
             f'{was}<span class="counters">{legend}</span>{icon("chevron", "chev")}</summary>')
     rows = "".join(_crit_row(c, present) for c in cl["criteria"])
-    return f'<details class="panel" id="order" open>{head}<div class="panel-body erows">{rows}</div></details>'
+    return f'<details class="panel" id="order">{head}<div class="panel-body erows">{rows}</div></details>'
 
 
 # --- безопасность ----------------------------------------------------------------------------
@@ -668,6 +671,11 @@ def _recheck_chip(f: dict) -> str:
     at = (c.get("at") or "")[11:16]
     title = f'Перепроверено{" в " + at if at else ""}: {sec_mod.RECHECK_NAMES[c["result"]]} — {c.get("detail") or ""}'
     return f'<span class="st {cls}" title="{e(title)}">{icon(ico, "s")}{e(at + " " + text if at else text)}</span>'
+
+
+def _word(n: int, forms: tuple[str, str, str]) -> str:
+    """Слово без числа: число уже крупно рядом."""
+    return plural(n, forms).split(" ", 1)[1]
 
 
 def plural(n: int, forms: tuple[str, str, str]) -> str:
@@ -820,7 +828,7 @@ def _security(model: dict) -> str:
     skipped = "".join(
         f'<div class="note">{icon("info", "s")}<span>Не проверялось: {e(sec_mod.BY_ID[cid].title.lower())} — {e(why)}</span></div>'
         for cid, why in (sec.get("skipped") or {}).items())
-    return (f'<details class="panel{" crit" if top == 1 else ""}" id="security" open>{head}'
+    return (f'<details class="panel{" crit" if top == 1 else ""}" id="security">{head}'
             f'<div class="panel-body">{cards}{skipped}</div></details>')
 
 
@@ -832,75 +840,105 @@ def _forwards(model: dict) -> str:
     present = {d["key"] for d in devs}
     by_ip = {ip: d for d in devs for ip in d["ips"]}
     rows = "".join(_fw_row(f, by_ip, present) for f in fw)
-    return (f'<details class="panel crit" id="doors" open><summary><h2>{icon("globe")}Открыто из интернета: {len(fw)}</h2>'
+    return (f'<details class="panel crit" id="doors"><summary><h2>{icon("globe")}Открыто из интернета: {len(fw)}</h2>'
             f'<span class="muted">каждый проброс — дверь снаружи; оставь только осознанные (например, VPN)</span>'
             f'{icon("chevron", "chev")}</summary><div class="panel-body">{rows}</div></details>')
 
 
-def _pills(model: dict) -> str:
+def _about(model: dict) -> str:
+    """«О срезе»: одна строка под заголовком; сеть, роутер, права, база, охват — по нажатию.
+    Чего не хватило для полной проверки — одной заметной плашкой «проверка неполная»."""
     meta, router = model["meta"], model.get("router")
-    pills = []
-
-    def pill(ico: str, short: str, text: str, cls: str = "", setup: bool = False) -> None:
-        # setup — в веб-интерфейсе кнопка «Настроить» открывает окно настройки (база IEEE, вход в роутер)
-        btn = (f'<button class="sbtn live-only pillbtn" data-setup>{icon("gear", "s")}Настроить</button>' if setup else "")
-        pills.append(f'<details class="pill {cls}"><summary>{icon(ico, "s")}{e(short)}</summary><div>{e(text)}{btn}</div></details>')
-
-    if router:
-        clients = router["clients"]
-        pill("router", f'{router.get("model") or "роутер"} · {router.get("firmware") or "?"}',
-             f'Роутер {router.get("model") or ""}, прошивка {router.get("firmware") or "?"}: клиентов в списке '
-             f'{len(clients)}, сейчас в сети {sum(1 for c in clients if c.get("active"))}. Данные только читаются.')
-    elif model.get("router_skipped"):
-        pill("router", "роутер недоступен", f'Данные роутера недоступны: {model["router_skipped"]}', "warn", setup=True)
+    iface = meta.get("interface") or {}
+    warns = []  # (текст, нужна ли кнопка «Настроить» — в веб-интерфейсе открывает окно настройки)
+    if not router and model.get("router_skipped"):
+        warns.append((f'Данные роутера недоступны: {model["router_skipped"]}. Без них нет карты подключений и пробросов.', True))
     if not meta.get("admin"):
-        pill("alert", "без админа", "Срез сделан без прав администратора. Часть будущих проверок "
-             "(параметры SMB этого компьютера, DISM) будет недоступна.", "warn")
+        warns.append(("Срез сделан без прав администратора: часть проверок этого компьютера (SMB, DISM) недоступна.", False))
     if not model.get("oui_available"):
-        pill("alert", "нет базы IEEE", "Нет базы производителей IEEE (data/oui.txt): производитель по MAC не определяется. "
-             "Команда: python -m lanmap oui update", "warn", setup=True)
+        warns.append(("Нет базы производителей IEEE: производитель по MAC не определяется.", True))
     stages = meta.get("stages") or []
     duration = f'{stages[-1]["at_s"]:.0f} с' if stages else "?"
-    pill("info", "о срезе", f'Интерфейс «{(meta.get("interface") or {}).get("alias", "?")}», компьютер '
-         f'{meta.get("hostname", "?")}, проверено портов: {meta.get("ports_tested", "?")}, длительность {duration}. '
-         "Программа только читает сеть и ничего не меняет на устройствах."
-         + (f' Данные LanMap: {model["data_dir"]}' if model.get("data_dir") else ""))
-    return f'<div class="pills">{"".join(pills)}</div>'
-
-
-def _kpis(model: dict) -> str:
     devs = model["devices"]
     alive = [d for d in devs if d["alive"]]
     sure = sum(1 for d in alive if d["identity"]["confidence"] >= 3)
-    share = sure / len(alive) if alive else 0
     circ = 2 * 3.14159 * 15
     ring = (f'<svg class="ring" viewBox="0 0 38 38" aria-hidden="true"><circle class="bg" cx="19" cy="19" r="15"/>'
-            f'<circle class="fg" cx="19" cy="19" r="15" stroke-dasharray="{circ * share:.1f} {circ:.1f}"/></svg>')
+            f'<circle class="fg" cx="19" cy="19" r="15" stroke-dasharray="{circ * (sure / len(alive) if alive else 0):.1f} '
+            f'{circ:.1f}"/></svg>')
     signed = sum(1 for d in devs if (d.get("registry") or {}).get("confirmed"))
-    tiles = [
-        f'<button class="kpi" data-kpi="all"><span class="ico">{icon("devices")}</span><span><b>{len(devs)}</b>'
-        f'<span class="l">устройств</span></span></button>',
-        f'<button class="kpi" data-kpi="online"><span class="ico"><i class="dot"></i></span><span><b>{len(alive)}</b>'
-        f'<span class="l">в сети</span></span></button>',
-        f'<div class="kpi" title="Опознаны с высокой уверенностью среди отвечавших">{ring}<span><b>{sure}</b>'
-        f'<span class="l">опознаны из {len(alive)}</span></span></div>',
-        f'<div class="kpi"><span class="ico">{icon("check")}</span><span><b>{signed}</b><span class="l">подписаны</span></span></div>',
-    ]
-    c = model.get("changes")
-    if c and not c.get("error"):
-        tiles.append(f'<button class="kpi add" data-kpi="changes"><span class="ico">{icon("delta")}</span>'
-                     f'<span><b>{c.get("total", 0)}</b><span class="l">изменений</span></span></button>')
+    if router:
+        clients = router.get("clients") or []
+        rtext = (f'{router.get("model") or "роутер"} · прошивка {router.get("firmware") or "?"} · клиентов {len(clients)}, '
+                 f'сейчас в сети {sum(1 for c in clients if c.get("active"))}')
+    else:
+        rtext = "нет данных"
+    facts = [("router", "Роутер", rtext), ("devices", "Сеть", f'{iface.get("network", "?")} · интерфейс «{iface.get("alias", "?")}»'),
+             ("computer", "Компьютер", f'{meta.get("hostname", "?")} · права администратора: {"есть" if meta.get("admin") else "нет"}'),
+             ("search", "Проверено", f'портов: {meta.get("ports_tested", "?")} · длительность {duration}'),
+             ("barcode", "База производителей", "есть" if model.get("oui_available") else "нет"),
+             ("check", "Подписаны тобой", str(signed))]
+    if model.get("data_dir"):
+        facts.append(("folder", "Данные LanMap", model["data_dir"]))
+    rows = "".join(f'<div>{icon(i, "s")}<span>{e(k)}</span><b>{e(v)}</b></div>' for i, k, v in facts)
+    rows = (f'<div class="sure" title="Опознаны с высокой уверенностью среди отвечавших">{ring}<span>Опознаны уверенно</span>'
+            f'<b>{sure} из {len(alive)}</b></div>') + rows
+    setup = f'<button class="sbtn live-only" data-setup>{icon("gear", "s")}Настроить</button>'
+    wl = "".join(f'<div class="awarn">{icon("alert", "s")}<span>{e(t)}</span>{setup if s else ""}</div>' for t, s in warns)
+    short = " · ".join(x for x in (f'{router.get("model") or "роутер"} {router.get("firmware") or ""}'.strip() if router else "",
+                                   f'портов {meta.get("ports_tested")}' if meta.get("ports_tested") else "") if x)
+    flag = (f'<span class="pc warn">{icon("alert", "s")}проверка неполная · {len(warns)}</span>' if warns
+            else f'<span class="pc good">{icon("check", "s")}полная</span>')
+    return (f'<details class="about"><summary>{icon("info", "s")}О срезе{" · " + e(short) if short else ""} {flag}</summary>'
+            f'<div class="abody">{wl}<div class="agrid">{rows}</div>'
+            f'<p class="muted">LanMap только читает сеть и ничего не меняет на устройствах.</p></div></details>')
+
+
+def _summary(model: dict) -> str:
+    """Сводка сверху: главная находка крупно и показатели, каждый ведёт к своему разделу или фильтру."""
+    devs = model["devices"]
+    alive = sum(1 for d in devs if d["alive"])
+    cards = []
     sec = model.get("security")
     if sec:
         live = sec_mod.open_findings(sec)
-        top = min((f["priority"] for f in live), default=0)
-        tiles.append(f'<button class="kpi {"crit" if top == 1 else ""}" data-kpi="security"><span class="ico">'
-                     f'{icon("shield")}</span><span><b>{len(live)}</b><span class="l">находок безопасности</span></span></button>')
-    fw = fw_mod.merged(model)
+        if live:
+            f = min(live, key=lambda x: x["priority"])
+            dev = next((d for d in devs if d["key"] == f.get("key")), None)
+            more = (plural(len(live), ("находка", "находки", "находок")) + " безопасности"
+                    if len(live) > 1 else "одна находка безопасности")
+            cards.append(f'<button class="alert p{f["priority"]}" data-sec="{e(f["id"])}" data-kpi="security">'
+                         f'<span class="aico">{icon("shield")}</span><span class="atext">'
+                         f'<span class="atag">{e(sec_mod.PRIORITY_NAMES[f["priority"]])}</span>'
+                         f'<b>{e(sec_mod.BY_ID[f["id"]].title)}</b>'
+                         f'<span class="amore">{e(dev["title"]) + " · " if dev else ""}всего {more}</span></span>'
+                         f'{icon("arrow", "s")}</button>')
+        else:
+            cards.append(f'<button class="alert ok" data-kpi="security"><span class="aico">{icon("check")}</span>'
+                         f'<span class="atext"><b>Открытых находок нет</b><span class="amore">проверки безопасности — '
+                         f'в разделе ниже</span></span></button>')
+
+    def kpi(key: str, ico: str, big: str, label: str, cls: str = "", sub: str = "") -> None:
+        cards.append(f'<button class="kpi {cls}" data-kpi="{key}"><span class="ico">{ico}</span><span><b>{big}</b>'
+                     f'<span class="l">{e(label)}</span>{"<span class=sub>" + e(sub) + "</span>" if sub else ""}</span></button>')
+
+    c = model.get("changes")
+    if c and not c.get("error"):
+        new = sum(1 for items in (c.get("by_key") or {}).values() for x in items if x["what"] == "new")
+        kpi("new", icon("plus"), str(new), _word(new, ("новое устройство", "новых устройства", "новых устройств")),
+            "add" if new else "")
+        kpi("changes", icon("delta"), str(c.get("total", 0)), "изменений с прошлого среза")
+    kpi("online", '<i class="dot"></i>', str(alive), "в сети",
+        sub=f"ещё {len(devs) - alive} не отвечали" if len(devs) > alive else "")
+    cl = model.get("checklist")
+    if cl:
+        kpi("order", icon("check"), f'{cl["score"]} <small>из {cl["total"]}</small>', "порядок в сети",
+            "good" if cl["score"] == cl["total"] else "")
     if fw_mod.upnp_known(model):
-        tiles.append(f'<button class="kpi {"crit" if fw else ""}" data-kpi="doors"><span class="ico">{icon("globe")}</span>'
-                     f'<span><b>{len(fw)}</b><span class="l">дверей из интернета</span></span></button>')
-    return f'<div class="kpis">{"".join(tiles)}</div>'
+        fw = fw_mod.merged(model)
+        kpi("doors", icon("globe"), str(len(fw)), _word(len(fw), ("дверь", "двери", "дверей")) + " из интернета",
+            "crit" if fw else "good")
+    return f'<div class="sum">{"".join(cards)}</div>'
 
 
 def _legend() -> str:
@@ -951,8 +989,12 @@ def render(model: dict) -> str:
                         f'<span class="n">{count[g]}</span></summary>'
                         f'<div class="grid">{tiles}</div></details>')
     has_changes = any(((changes or {}).get("by_key") or {}).get(d["key"]) for d in devs)
-    changed_btn = (f'<button class="iconbtn" id="f-changed" {tip("Только изменившиеся")}>{icon("delta", "s")}</button>'
+    changed_btn = (f'<button class="iconbtn" id="f-changed">{icon("delta", "s")}<span>изменились</span></button>'
                    if has_changes else "")
+    has_new = any(x["what"] == "new" for items in ((changes or {}).get("by_key") or {}).values() for x in items)
+    new_btn = f'<button data-quick="new">{icon("plus", "s")}Новые</button>' if has_new else ""
+    find_btn = (f'<button data-quick="find">{icon("shield", "s")}С находками</button>'
+                if sec_mod.open_findings(model.get("security")) else "")
     started = meta.get("started", "")[:16].replace("T", " ")
     mapped = has_map(model)
     map_btn = (f'<button class="tip-l" data-view="map" {tip("Карта: кто куда подключён")}>{icon("devices", "s")}</button>'
@@ -977,23 +1019,30 @@ def render(model: dict) -> str:
     <button class="iconbtn tip-l" id="theme" {tip("Светлая / тёмная тема")}>{icon("sun", "s")}{icon("moon", "s")}</button>
     <button class="iconbtn live-only quitbtn tip-l" id="quit" {tip("Выключить LanMap и закрыть вкладку")}>{icon("power", "s")}</button>
   </div>
-  {_pills(model)}
-  {_kpis(model)}
+  {_about(model)}
+  {_summary(model)}
 </header>
-{_checklist(model)}
-{_security(model)}
-{_forwards(model)}
-{_changes(model)}
-<nav class="gfilters" aria-label="Группы устройств">{gfilters}</nav>
 <div class="bar">
   <label class="search">{icon("search", "s")}<input id="q" type="search" placeholder="IP, MAC, имя, порт…" autocomplete="off"></label>
-  <span class="seg" role="group" aria-label="Состояние">
-    <button data-status="" {tip("Все устройства")}>все</button>
-    <button data-status="on" {tip("В сети")}><i class="dot"></i></button>
-    <button data-status="off" {tip("Не отвечали")}><i class="dot off"></i></button>
+  <span class="seg quick" role="group" aria-label="Показать">
+    <button data-quick="" class="on">Все</button>{new_btn}{find_btn}
   </span>
-  {changed_btn}
-  <button class="iconbtn" id="f-low" {tip("Только неуверенно опознанные")}>{icon("question", "s")}</button>
+  <details class="more"><summary class="iconbtn" aria-label="Ещё фильтры">{icon("expand", "s")}<span class="mlbl">Ещё</span>
+    <span class="mbadge" hidden></span></summary>
+    <div class="pop">
+      <h4>Группы</h4><nav class="gfilters" aria-label="Группы устройств">{gfilters}</nav>
+      <h4>Состояние</h4><div class="lv">
+        <span class="seg" role="group" aria-label="Состояние">
+          <button data-status="">все</button>
+          <button data-status="on"><i class="dot"></i>в сети</button>
+          <button data-status="off"><i class="dot off"></i>не отвечали</button>
+        </span>
+        {changed_btn}
+        <button class="iconbtn" id="f-low">{icon("question", "s")}<span>опознаны неуверенно</span></button>
+      </div>
+    </div>
+  </details>
+  <span class="spacer"></span>
   <span class="seg" role="group" aria-label="Вид">
     {map_btn}<button class="tip-l" data-view="tiles" {tip("Плитки")}>{icon("grid", "s")}</button>
     <button class="tip-l" data-view="list" {tip("Список")}>{icon("list", "s")}</button>
@@ -1001,7 +1050,13 @@ def render(model: dict) -> str:
   <button class="iconbtn tip-l" id="expand" {tip("Развернуть / свернуть все")}>{icon("expand", "s")}</button>
 </div>
 <main data-map="{1 if mapped else 0}">{_map(model) if mapped else ""}{''.join(sections)}<p id="empty" class="note hidden">{icon("search", "s")}Ничего не найдено.</p></main>
+<div class="panels">
+{_security(model)}
+{_changes(model)}
+{_forwards(model)}
+{_checklist(model)}
 {_legend()}
+</div>
 <footer>LanMap {e(meta.get('lanmap_version', ''))} · только чтение сети · отчёт содержит личные данные, не публикуй его</footer>
 </div>
 <script type="application/json" id="aiprompt">{_script_json({"prompt": aiparse_mod.PROMPT})}</script>

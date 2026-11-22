@@ -354,7 +354,8 @@ class ChangesTest(unittest.TestCase):
         full["security"] = security.evaluate(full, snap, self.TESTED, {})
         page = render(full)
         for text in ("Открыто из интернета", "Изменения", "+23", "d-" + MAC_B, "wifi1", "Безопасность",
-                     "sec-TELNET_OPEN", "sec-UPNP_PORT_MAPPINGS", "находок безопасности", "Что может сломаться"):
+                     "sec-TELNET_OPEN", "sec-UPNP_PORT_MAPPINGS", 'data-kpi="security"', "Что может сломаться",
+                     'class="alert p1"', 'data-quick="find"', 'data-find="1"', "О срезе"):
             self.assertIn(text, page)
         bare = model([rdev(MAC_B, "192.0.2.10", "camera")])
         self.assertIn("Сеть", render(bare))

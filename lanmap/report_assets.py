@@ -87,16 +87,32 @@ button{font:inherit;color:inherit}
 border-radius:8px;height:32px;min-width:32px;padding:0 8px;cursor:pointer;color:var(--fg)}
 .iconbtn:hover{border-color:var(--accent);color:var(--accent)}
 .iconbtn.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-details.pill{position:relative}
-details.pill>summary{list-style:none;display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:3px 9px;border-radius:999px;
-background:var(--chip);cursor:pointer;color:var(--muted)}
-details.pill>summary::-webkit-details-marker{display:none}
-details.pill.warn>summary{background:var(--warn-soft);color:var(--warn)}
-details.pill>div{position:absolute;z-index:20;top:28px;left:0;width:min(360px,80vw);background:var(--card);border:1px solid var(--line);
-border-radius:10px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.15);font-size:13px}
-/* показатели */
-.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:14px 0}
+/* «О срезе»: строка под заголовком, подробности по нажатию */
+details.about{margin-top:6px}
+details.about>summary{list-style:none;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;cursor:pointer;color:var(--muted);font-size:13px}
+details.about>summary::-webkit-details-marker{display:none}
+details.about[open]>summary{color:var(--fg)}
+.abody{margin-top:8px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;display:grid;gap:8px}
+.agrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:6px 18px}
+.agrid>div{display:flex;align-items:center;gap:7px;min-width:0}.agrid span{color:var(--muted)}
+.agrid b{font-weight:500;overflow-wrap:anywhere}.agrid svg.i{color:var(--muted)}
+.agrid .ring{width:22px!important;height:22px!important}
+.awarn{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--warn-soft);color:var(--warn-text);border-radius:9px;padding:6px 10px}
+.abody p{margin:0}
+/* сводка: главная находка крупно, показатели — кнопки к разделам и фильтрам */
+.sum{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin:12px 0}
+.alert{grid-column:span 2;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer;color:var(--fg);
+background:var(--crit-soft);border:1px solid var(--crit);border-left-width:6px;border-radius:12px;padding:10px 14px;min-width:0}
+.alert:hover{box-shadow:0 0 0 2px var(--crit)}
+.alert .aico{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--crit);color:#fff}
+.alert .aico svg.i{width:28px;height:28px}
+.alert .atext{display:flex;flex-direction:column;min-width:0;flex:1}
+.alert .atag{font-size:12px;font-weight:700;color:var(--crit);text-transform:uppercase;letter-spacing:.03em}
+.alert b{font-size:16px;line-height:1.25}.alert .amore{font-size:12.5px;color:var(--muted)}
+.alert.p2,.alert.p3{background:var(--warn-soft);border-color:var(--warn)}.alert.p2 .aico,.alert.p3 .aico{background:var(--warn)}
+.alert.p2 .atag,.alert.p3 .atag{color:var(--warn-text)}
+.alert.ok{background:var(--card);border-color:var(--good)}.alert.ok .aico{background:var(--good)}
+@media (max-width:560px){.alert{grid-column:1/-1}}
 .kpi{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;
 box-shadow:var(--shadow);text-align:left;cursor:default}
 button.kpi{cursor:pointer}button.kpi:hover{border-color:var(--accent)}
@@ -106,6 +122,21 @@ button.kpi{cursor:pointer}button.kpi:hover{border-color:var(--accent)}
 .kpi b{display:block;font-size:22px;line-height:1.1}.kpi span.l{color:var(--muted);font-size:12px}
 .kpi.crit{border-color:var(--crit)}.kpi.crit .ico{background:var(--crit-soft);color:var(--crit)}
 .kpi.add .ico{background:var(--add-soft);color:var(--add)}
+.kpi.good .ico{background:color-mix(in srgb,var(--good) 15%,var(--card));color:var(--good)}
+.kpi .sub{display:block;color:var(--muted);font-size:11.5px}.kpi b small{font-size:13px;color:var(--muted);font-weight:500}
+.kpi .ico .dot{width:16px;height:16px}
+/* фильтры: быстрые кнопками, остальное — во всплывающем «Ещё» */
+.bar .spacer{flex:1}
+details.more{position:static}
+details.more>summary{list-style:none}details.more>summary::-webkit-details-marker{display:none}
+.mbadge{min-width:18px;height:18px;border-radius:9px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:inline-grid;place-items:center;padding:0 5px}
+.mbadge[hidden]{display:none}
+.pop{position:absolute;z-index:25;top:calc(100% + 4px);left:0;width:min(460px,100%);background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);display:grid;gap:8px}
+.pop h4{margin:0;font-size:12px;color:var(--muted);font-weight:600}
+.pop .gfilters{grid-template-columns:repeat(auto-fill,minmax(62px,1fr));gap:8px;margin:0}
+.pop .gf{border-radius:14px}.pop .gf .badge{top:3px;right:3px;min-width:20px;height:20px;line-height:20px;font-size:11px;padding:0 5px;border-radius:10px}
+.pop .lv{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.panels{margin-top:16px}
 .ring{width:38px;height:38px;flex:none}.ring circle{fill:none;stroke-width:4}
 .ring .bg{stroke:var(--chip)}.ring .fg{stroke:var(--accent);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%}
 .dot{display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--good);flex:none}
@@ -499,7 +530,7 @@ const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelecto
 const store={get(k){try{return localStorage.getItem('lanmap.'+k)}catch(e){return null}},
              set(k,v){try{localStorage.setItem('lanmap.'+k,v)}catch(e){}}};
 const main=$('main');
-const st={group:'',status:'',changed:false,low:false,q:''};
+const st={group:'',status:'',changed:false,low:false,q:'',quick:''};
 
 // тема
 const theme=store.get('theme');if(theme)document.documentElement.dataset.theme=theme;
@@ -538,7 +569,7 @@ $('#expand').addEventListener('click',()=>{const vis=$$('.tile:not(.hidden)');co
 // переход к устройству из панели изменений и пробросов
 $$('[data-goto]').forEach(b=>b.addEventListener('click',e=>{e.preventDefault();
  const t=document.getElementById('d-'+b.dataset.goto);if(!t)return;
- st.group='';st.status='';st.changed=false;st.low=false;st.q='';$('#q').value='';sync();
+ st.group='';st.status='';st.changed=false;st.low=false;st.q='';st.quick='';$('#q').value='';sync();
  for(let p=t.parentElement;p;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true;openTile(t,true);
  t.scrollIntoView({behavior:'smooth',block:'center'});t.classList.remove('flash');void t.offsetWidth;t.classList.add('flash');}));
 
@@ -546,7 +577,7 @@ $$('[data-goto]').forEach(b=>b.addEventListener('click',e=>{e.preventDefault();
 function apply(){const q=st.q.trim().toLowerCase();
  $$('.tile').forEach(t=>{const d=t.dataset;
   const ok=(!st.group||d.group===st.group)&&(!st.status||d.status===st.status)&&(!st.changed||d.changed==='1')
-   &&(!st.low||+d.conf<3)&&(!q||d.search.includes(q));t.classList.toggle('hidden',!ok);});
+   &&(!st.low||+d.conf<3)&&(!q||d.search.includes(q))&&(!st.quick||(st.quick==='new'?d.new==='1':d.find==='1'));t.classList.toggle('hidden',!ok);});
  $$('details.group').forEach(g=>{const n=$$('.tile:not(.hidden)',g).length;g.classList.toggle('hidden',!n);
   $('.n',g).textContent=n;if(q&&n)g.open=true;});
  // карта: пустые ветки и сегменты прячутся, счётчики — по видимым
@@ -557,7 +588,12 @@ function apply(){const q=st.q.trim().toLowerCase();
 function sync(){$$('.gf').forEach(b=>b.classList.toggle('on',b.dataset.group===st.group));
  $('.gfilters').classList.toggle('picked',!!st.group);
  $$('button[data-status]').forEach(b=>b.classList.toggle('on',b.dataset.status===st.status));
- const c=$('#f-changed');if(c)c.classList.toggle('on',st.changed);$('#f-low').classList.toggle('on',st.low);apply();}
+ const c=$('#f-changed');if(c)c.classList.toggle('on',st.changed);$('#f-low').classList.toggle('on',st.low);
+ $$('[data-quick]').forEach(b=>b.classList.toggle('on',b.dataset.quick===st.quick));
+ // на «Ещё» — сколько скрытых фильтров включено, чтобы фильтр не забылся
+ const n=(st.group?1:0)+(st.status?1:0)+(st.changed?1:0)+(st.low?1:0),mb=$('.mbadge');if(mb){mb.hidden=!n;mb.textContent=n;}
+ apply();}
+$$('[data-quick]').forEach(b=>b.addEventListener('click',()=>{st.quick=b.dataset.quick;sync();}));
 $$('.gf').forEach(b=>b.addEventListener('click',()=>{st.group=st.group===b.dataset.group?'':b.dataset.group;sync();}));
 $$('button[data-status]').forEach(b=>b.addEventListener('click',()=>{st.status=b.dataset.status;sync();}));
 const fc=$('#f-changed');if(fc)fc.addEventListener('click',()=>{st.changed=!st.changed;sync();});
@@ -565,8 +601,13 @@ $('#f-low').addEventListener('click',()=>{st.low=!st.low;sync();});
 $('#q').addEventListener('input',e=>{st.q=e.target.value;apply();});
 $$('[data-kpi]').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.kpi;
  if(k==='online'){st.status='on';sync();$('.bar').scrollIntoView({behavior:'smooth'});}
- else if(k==='all'){st.group='';st.status='';st.changed=false;st.low=false;sync();}
- else{const p=document.getElementById(k);if(p){p.open=true;p.scrollIntoView({behavior:'smooth'});}}}));
+ else if(k==='new'){st.quick='new';sync();$('.bar').scrollIntoView({behavior:'smooth'});}
+ else if(k==='all'){st.group='';st.status='';st.changed=false;st.low=false;st.quick='';sync();}
+ else{const p=document.getElementById(k);if(!p)return;
+  // главная находка: раскрыть «Безопасность» и показать её карточку
+  const t=(b.dataset.sec&&document.getElementById('sec-'+b.dataset.sec))||p;
+  for(let x=t;x;x=x.parentElement)if(x.tagName==='DETAILS')x.open=true;
+  t.scrollIntoView({behavior:'smooth',block:'start'});t.classList.remove('flash');void t.offsetWidth;t.classList.add('flash');}}));
 
 // копирование
 $$('[data-copy]').forEach(b=>b.addEventListener('click',async e=>{e.stopPropagation();const v=b.dataset.copy;
@@ -690,7 +731,7 @@ if(askBtn)askBtn.addEventListener('click',()=>{
  shdlg.showModal();});
 
 // всплывающие заметки: закрывать по клику мимо
-document.addEventListener('click',e=>{$$('details.pill[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});
+document.addEventListener('click',e=>{$$('details.more[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});});
 sync();
 
 // веб-интерфейс (python -m lanmap serve): кнопки вместо команд. Без сервера (файл отчёта) ничего не делает.
