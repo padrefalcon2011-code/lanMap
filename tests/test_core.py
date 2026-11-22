@@ -130,6 +130,26 @@ class SnapshotCheckTest(unittest.TestCase):
         self.assertIn("проверка неполная", about)
 
 
+class SnapshotDirTest(unittest.TestCase):
+    def test_parallel_same_second_get_distinct_dirs(self):
+        """Папку занимает mkdir: параллельные срезы в одну секунду не делят и не роняют друг друга."""
+        import concurrent.futures
+        import datetime as dt
+        from unittest import mock
+        from lanmap import scan, snapshot
+        root = Path(TMP.name) / "snapdir-test"
+        frozen = dt.datetime(2026, 1, 2, 3, 4, 5)
+        with mock.patch.object(scan, "snapshots_dir", lambda: root), \
+                mock.patch.object(scan.dt, "datetime", mock.Mock(now=lambda: frozen)):
+            with concurrent.futures.ThreadPoolExecutor(8) as pool:
+                made = list(pool.map(lambda _: scan.new_snapshot_dir(), range(12)))
+        self.assertEqual(len({p.name for p in made}), 12)
+        self.assertTrue(all((p / "raw").is_dir() for p in made))
+        names = [p.name for p in sorted(made, key=snapshot.order_key)]
+        self.assertEqual(names[:3], ["2026-01-02_030405", "2026-01-02_030405_2", "2026-01-02_030405_3"])
+        self.assertEqual(names[-1], "2026-01-02_030405_12")
+
+
 class ScanPassportTest(unittest.TestCase):
     """run_scan на подставной сети: сбой необязательного этапа не обрывает срез, а пишется в паспорт."""
 

@@ -22,14 +22,20 @@ def snapshots_dir() -> Path:
 
 
 def new_snapshot_dir() -> Path:
-    """Новая папка среза. Существующие никогда не перезаписываются."""
+    """Новая папка среза. Существующие никогда не перезаписываются: имя занимает сам mkdir (exist_ok=False),
+    поэтому два среза в одну секунду, даже параллельных, получат …_HHMMSS и …_HHMMSS_2, а не одну папку."""
     base = dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    path = snapshots_dir() / base
-    n = 2
-    while path.exists():
-        path = snapshots_dir() / f"{base}_{n}"
-        n += 1
-    (path / "raw").mkdir(parents=True)
+    root = snapshots_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        path = root / (base if n == 1 else f"{base}_{n}")
+        try:
+            path.mkdir()
+            break
+        except FileExistsError:
+            n += 1
+    (path / "raw").mkdir()
     return path
 
 
